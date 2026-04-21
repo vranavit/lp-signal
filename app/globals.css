@@ -3,52 +3,169 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light mode — default (Preqin / Dakota / PitchBook) */
   :root {
+    color-scheme: light;
+
+    --bg: 250 250 250;           /* page = zinc-50 */
+    --bg-subtle: 255 255 255;    /* cards / tables / sidebar = white */
+    --bg-panel: 244 244 245;     /* zinc-100 — muted emphasis */
+    --bg-hover: 244 244 245;     /* zinc-100 — row hover */
+
+    --ink: 24 24 27;             /* zinc-900 */
+    --ink-muted: 82 82 91;       /* zinc-600 */
+    --ink-faint: 113 113 122;    /* zinc-500 */
+    --ink-dim: 161 161 170;      /* zinc-400 */
+
+    --line: 228 228 231;         /* zinc-200 */
+    --line-strong: 212 212 216;  /* zinc-300 */
+    --line-bright: 161 161 170;  /* zinc-400 */
+
+    /* Primary accent — professional blue */
+    --accent: 30 64 175;         /* blue-800 */
+    --accent-hi: 30 58 138;      /* blue-900 (hover/press) */
+    --accent-dim: 219 234 254;   /* blue-100 (tints/rings) */
+
+    /* Priority-score palette: amber stays reserved for score ≥75 */
+    --pri-hi: 180 83 9;          /* amber-700 */
+    --pri-mid: 24 24 27;
+    --pri-lo: 161 161 170;
+
+    --signal-t1: 30 64 175;      /* T1 uses primary blue */
+    --signal-t2: 82 82 91;
+    --signal-t3: 161 161 170;
+  }
+
+  .dark {
     color-scheme: dark;
+
+    --bg: 10 10 11;
+    --bg-subtle: 16 16 18;
+    --bg-panel: 20 20 22;
+    --bg-hover: 23 23 26;
+
+    --ink: 237 237 240;
+    --ink-muted: 163 163 173;
+    --ink-faint: 113 113 122;
+    --ink-dim: 82 82 91;
+
+    --line: 31 31 34;
+    --line-strong: 46 46 52;
+    --line-bright: 58 58 66;
+
+    --accent: 59 130 246;        /* blue-500 */
+    --accent-hi: 96 165 250;     /* blue-400 */
+    --accent-dim: 30 58 138;
+
+    --pri-hi: 245 158 11;        /* amber-400 */
+    --pri-mid: 237 237 240;
+    --pri-lo: 113 113 122;
+
+    --signal-t1: 96 165 250;
+    --signal-t2: 163 163 173;
+    --signal-t3: 113 113 122;
   }
 
   html,
   body {
-    background: #0b0b0c;
-    color: #ededf0;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+    background: rgb(var(--bg));
+    color: rgb(var(--ink));
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   ::selection {
-    background: #d97706;
-    color: #0b0b0c;
+    background: rgb(var(--accent));
+    color: white;
   }
 
   hr {
-    border-color: #242428;
+    border-color: rgb(var(--line));
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--line-strong));
+    border: 2px solid rgb(var(--bg));
+    border-radius: 6px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--line-bright));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
 @layer components {
   .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-family: var(--font-jetbrains), ui-monospace, SFMono-Regular, Menlo,
+      Consolas, "Liberation Mono", monospace;
     font-variant-numeric: tabular-nums;
+    font-feature-settings: "zero", "ss01";
     letter-spacing: -0.005em;
   }
 
+  .num {
+    font-family: var(--font-jetbrains), ui-monospace, SFMono-Regular, Menlo,
+      Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "zero";
+  }
+
   .hairline {
-    border-color: #242428;
+    border-color: rgb(var(--line));
   }
 
   .panel {
-    background: #111113;
-    border: 1px solid #242428;
+    background: rgb(var(--bg-subtle));
+    border: 1px solid rgb(var(--line));
+    border-radius: 4px;
+  }
+
+  /* Preqin-style layered card: white surface on zinc-50 page, hairline + faint shadow */
+  .card-surface {
+    background: rgb(var(--bg-subtle));
+    border: 1px solid rgb(var(--line));
+    border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(24, 24, 27, 0.04);
+  }
+
+  .dark .card-surface {
+    box-shadow: none;
   }
 
   .kbd {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 11px;
+    font-family: var(--font-jetbrains), ui-monospace, SFMono-Regular, Menlo,
+      Consolas, monospace;
+    font-size: 10px;
     padding: 1px 5px;
-    border: 1px solid #35353b;
+    border: 1px solid rgb(var(--line-strong));
     border-radius: 3px;
-    background: #141416;
-    color: #9a9aa3;
+    background: rgb(var(--bg-panel));
+    color: rgb(var(--ink-muted));
+  }
+
+  .pri-hi {
+    color: rgb(var(--pri-hi));
+  }
+  .pri-mid {
+    color: rgb(var(--pri-mid));
+  }
+  .pri-lo {
+    color: rgb(var(--pri-lo));
   }
 }

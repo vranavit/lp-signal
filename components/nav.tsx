@@ -1,11 +1,11 @@
 import Link from "next/link";
 
-type NavItem = { href: string; label: string };
+type NavItem = { href: string; label: string; shortcut?: string };
 
 const items: NavItem[] = [
-  { href: "/signals", label: "Signals" },
-  { href: "/plans", label: "Plans" },
-  { href: "/settings", label: "Settings" },
+  { href: "/signals", label: "Signals", shortcut: "S" },
+  { href: "/plans", label: "Plans", shortcut: "P" },
+  { href: "/settings", label: "Settings", shortcut: "," },
 ];
 
 export function TopNav({
@@ -16,14 +16,25 @@ export function TopNav({
   userEmail: string | null;
 }) {
   return (
-    <header className="border-b border-line bg-bg">
-      <div className="max-w-[1400px] mx-auto flex items-center justify-between h-12 px-6">
-        <div className="flex items-center gap-8">
-          <Link href="/signals" className="flex items-baseline gap-1.5">
-            <span className="text-[11px] uppercase tracking-widest mono text-ink-faint">LP</span>
-            <span className="text-sm font-semibold tracking-tightish text-ink">Signal</span>
+    <header className="sticky top-0 z-30 border-b border-line bg-bg/80 backdrop-blur supports-[backdrop-filter]:bg-bg/70">
+      <div className="max-w-[1440px] mx-auto flex items-center justify-between h-11 px-5">
+        <div className="flex items-center gap-7">
+          <Link
+            href="/signals"
+            className="flex items-center gap-2 group cursor-pointer"
+          >
+            <span
+              aria-hidden
+              className="inline-block h-[14px] w-[14px] border border-accent bg-accent/10"
+            />
+            <span className="text-[13px] font-semibold tracking-tightish text-ink">
+              Allocus
+            </span>
+            <span className="mono text-[10px] uppercase tracking-widestish text-ink-faint">
+              /LP Signal
+            </span>
           </Link>
-          <nav className="flex items-center gap-1">
+          <nav className="flex items-center gap-0.5">
             {items.map((i) => {
               const isActive = active === i.href;
               return (
@@ -31,26 +42,37 @@ export function TopNav({
                   key={i.href}
                   href={i.href}
                   className={
-                    "h-8 px-2.5 inline-flex items-center text-xs rounded-sm " +
+                    "h-7 px-2.5 inline-flex items-center gap-2 text-[12px] rounded-sm transition-colors duration-150 cursor-pointer " +
                     (isActive
                       ? "text-ink bg-bg-panel border border-line"
-                      : "text-ink-muted hover:text-ink hover:bg-bg-panel border border-transparent")
+                      : "text-ink-muted hover:text-ink hover:bg-bg-subtle border border-transparent")
                   }
                 >
-                  {i.label}
+                  <span>{i.label}</span>
+                  {i.shortcut ? (
+                    <span className="kbd hidden sm:inline-flex">{i.shortcut}</span>
+                  ) : null}
                 </Link>
               );
             })}
           </nav>
         </div>
         <div className="flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500/70 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+            <span className="mono text-[10px] uppercase tracking-widestish text-ink-faint">
+              Live
+            </span>
+          </div>
           {userEmail ? (
-            <span className="mono text-[11px] text-ink-muted">{userEmail}</span>
+            <span className="mono text-[11px] text-ink-muted hidden sm:inline">
+              {userEmail}
+            </span>
           ) : null}
           <form action="/auth/sign-out" method="post">
             <button
               type="submit"
-              className="h-8 px-2.5 inline-flex items-center text-xs text-ink-muted hover:text-ink border border-line hover:border-line-strong rounded-sm"
+              className="h-7 px-2.5 inline-flex items-center text-[12px] text-ink-muted hover:text-ink border border-line hover:border-line-strong rounded-sm transition-colors duration-150 cursor-pointer"
             >
               Sign out
             </button>

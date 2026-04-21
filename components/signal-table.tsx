@@ -1,95 +1,179 @@
-import Link from "next/link";
+"use client";
+
 import { Badge } from "@/components/ui/badge";
 import { daysAgo, formatUSD } from "@/lib/utils";
-import type { SignalWithPlan } from "@/lib/types";
+import type { SignalWithDoc } from "@/components/signals-workspace";
 
 function typeLabel(t: 1 | 2 | 3) {
-  if (t === 1) return "T1 · Commitment";
-  if (t === 2) return "T2 · Target Δ";
-  return "T3 · Pacing";
+  if (t === 1) return "T1 Commitment";
+  if (t === 2) return "T2 Target Δ";
+  return "T3 Pacing";
 }
 
 function typeBadgeVariant(t: 1 | 2 | 3): "t1" | "t2" | "t3" {
   return t === 1 ? "t1" : t === 2 ? "t2" : "t3";
 }
 
-export function SignalTable({ rows }: { rows: SignalWithPlan[] }) {
+function priorityTone(score: number): "hi" | "mid" | "lo" {
+  if (score >= 75) return "hi";
+  if (score >= 50) return "mid";
+  return "lo";
+}
+
+function ScoreCell({ score }: { score: number }) {
+  const tone = priorityTone(score);
+  const color =
+    tone === "hi" ? "pri-hi" : tone === "mid" ? "pri-mid" : "pri-lo";
+  const dot =
+    tone === "hi"
+      ? "bg-pri-hi"
+      : tone === "mid"
+      ? "bg-ink-dim"
+      : "border border-line-strong";
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        aria-hidden
+        className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`}
+      />
+      <span
+        className={`num tabular-nums text-[13px] font-medium ${color}`}
+      >
+        {score.toString().padStart(3, "0")}
+      </span>
+    </div>
+  );
+}
+
+export function SignalTable({
+  rows,
+  onSelect,
+  selectedId,
+}: {
+  rows: SignalWithDoc[];
+  onSelect?: (id: string) => void;
+  selectedId?: string | null;
+}) {
   if (rows.length === 0) {
     return (
-      <div className="panel p-8 text-center text-sm text-ink-muted">
-        No signals yet. Run the scraper or wait for the 06:00 UTC cron.
+      <div className="card-surface p-10 text-center">
+        <div className="text-[13px] text-ink-muted">
+          No signals match these filters.
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="border border-line">
-      <table className="w-full border-collapse text-sm">
-        <thead className="bg-bg-subtle">
-          <tr className="text-[10px] uppercase tracking-widest text-ink-faint">
-            <th className="text-left font-normal px-3 py-2 w-[72px]">Score</th>
-            <th className="text-left font-normal px-3 py-2 w-[120px]">Type</th>
-            <th className="text-left font-normal px-3 py-2 w-[96px]">Asset</th>
-            <th className="text-left font-normal px-3 py-2 w-[160px]">Plan</th>
-            <th className="text-left font-normal px-3 py-2">Summary</th>
-            <th className="text-right font-normal px-3 py-2 w-[96px]">Amount</th>
-            <th className="text-right font-normal px-3 py-2 w-[64px]">Age</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr
-              key={r.id}
-              className="border-t border-line hover:bg-bg-subtle transition-colors"
-            >
-              <td className="px-3 py-2.5 align-top">
-                <span className="mono text-ink tabular-nums">
-                  {r.priority_score}
-                </span>
-              </td>
-              <td className="px-3 py-2.5 align-top">
-                <Badge variant={typeBadgeVariant(r.signal_type)}>
-                  {typeLabel(r.signal_type)}
-                </Badge>
-              </td>
-              <td className="px-3 py-2.5 align-top">
-                <span className="mono text-[11px] uppercase tracking-widest text-ink-muted">
-                  {r.asset_class ?? "—"}
-                </span>
-              </td>
-              <td className="px-3 py-2.5 align-top">
-                <div className="text-ink">{r.plan.name}</div>
-                <div className="mono text-[10px] text-ink-faint">
-                  {r.plan.country} · {formatUSD(r.plan.aum_usd)}
-                </div>
-              </td>
-              <td className="px-3 py-2.5 align-top">
-                <Link
-                  href={`/signals/${r.id}`}
-                  className="text-ink hover:text-accent"
-                >
-                  {r.summary}
-                </Link>
-                {r.seed_data ? (
-                  <span className="ml-2">
-                    <Badge variant="seed">Seed</Badge>
-                  </span>
-                ) : null}
-              </td>
-              <td className="px-3 py-2.5 align-top text-right">
-                <span className="mono text-ink tabular-nums">
-                  {formatUSD(r.commitment_amount_usd)}
-                </span>
-              </td>
-              <td className="px-3 py-2.5 align-top text-right">
-                <span className="mono text-[11px] text-ink-muted tabular-nums">
-                  {daysAgo(r.created_at)}
-                </span>
-              </td>
+    <div className="card-surface overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-[13px]">
+          <thead>
+            <tr className="border-b border-line text-ink-faint">
+              <Th className="text-right w-[44px]">#</Th>
+              <Th className="w-[84px]">Score</Th>
+              <Th className="w-[132px]">Type</Th>
+              <Th className="w-[72px]">Asset</Th>
+              <Th className="w-[180px]">Plan</Th>
+              <Th>Summary</Th>
+              <Th className="text-right w-[104px]">Amount</Th>
+              <Th className="text-right w-[56px]">Age</Th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((r, idx) => {
+              const isSelected = selectedId === r.id;
+              return (
+                <tr
+                  key={r.id}
+                  onClick={() => onSelect?.(r.id)}
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelect?.(r.id);
+                    }
+                  }}
+                  className={
+                    "h-11 border-b border-line last:border-b-0 cursor-pointer transition-colors duration-150 " +
+                    (isSelected
+                      ? "bg-accent/5 outline outline-1 -outline-offset-1 outline-accent/40"
+                      : "odd:bg-black/[0.015] dark:odd:bg-white/[0.02] hover:bg-bg-hover")
+                  }
+                >
+                  <td className="px-4 py-0 align-middle text-right">
+                    <span className="num tabular-nums text-[11px] text-ink-dim">
+                      {(idx + 1).toString().padStart(3, "0")}
+                    </span>
+                  </td>
+                  <td className="px-4 py-0 align-middle">
+                    <ScoreCell score={r.priority_score} />
+                  </td>
+                  <td className="px-4 py-0 align-middle">
+                    <Badge variant={typeBadgeVariant(r.signal_type)}>
+                      {typeLabel(r.signal_type)}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-0 align-middle">
+                    <span className="text-[12.5px] text-ink-muted">
+                      {r.asset_class ?? "—"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-0 align-middle">
+                    <div className="text-[13px] text-ink leading-tight truncate">
+                      {r.plan.name}
+                    </div>
+                    <div className="num text-[10.5px] text-ink-faint leading-tight mt-0.5">
+                      {r.plan.country} · {formatUSD(r.plan.aum_usd)}
+                    </div>
+                  </td>
+                  <td className="px-4 py-0 align-middle">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[13px] text-ink truncate">
+                        {r.summary}
+                      </span>
+                      {r.seed_data ? (
+                        <span className="shrink-0">
+                          <Badge variant="seed">Seed</Badge>
+                        </span>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td className="px-4 py-0 align-middle text-right">
+                    <span className="num tabular-nums text-[13px] text-ink">
+                      {formatUSD(r.commitment_amount_usd)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-0 align-middle text-right">
+                    <span className="num tabular-nums text-[11.5px] text-ink-muted">
+                      {daysAgo(r.created_at)}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
+  );
+}
+
+function Th({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={
+        "text-left font-normal text-[12px] text-ink-faint px-4 h-9 bg-bg-subtle " +
+        className
+      }
+    >
+      {children}
+    </th>
   );
 }
