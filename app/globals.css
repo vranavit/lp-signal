@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    background: #0b0b0c;
+    color: #ededf0;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: #d97706;
+    color: #0b0b0c;
+  }
+
+  hr {
+    border-color: #242428;
+  }
+}
+
+@layer components {
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.005em;
+  }
+
+  .hairline {
+    border-color: #242428;
+  }
+
+  .panel {
+    background: #111113;
+    border: 1px solid #242428;
+  }
+
+  .kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    padding: 1px 5px;
+    border: 1px solid #35353b;
+    border-radius: 3px;
+    background: #141416;
+    color: #9a9aa3;
+  }
+}

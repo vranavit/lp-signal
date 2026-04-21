@@ -1,0 +1,31 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# next
+.next/
+out/
+next-env.d.ts
+
+# env
+.env
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editors
+.vscode/
+.idea/
+
+# build artifacts
+tsconfig.tsbuildinfo
+
+# supabase
+supabase/.temp/

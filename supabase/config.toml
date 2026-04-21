@@ -1,0 +1,13 @@
+# Minimal Supabase CLI config for LP Signal
+# The project_id below is only used locally by `supabase` commands; it must
+# match the project ref of the hosted Supabase project you intend to link
+# against (Dashboard → Project Settings → General → Reference ID).
+# You'll set this via `supabase link --project-ref <ref>` on first setup,
+# which also writes it here.
+
+project_id = "lp-signal"
+
+[db]
+# Port for the local `supabase start` shadow Postgres. Not used against the
+# hosted project — `supabase db push` uses SUPABASE_DB_URL / the linked project.
+port = 54322
