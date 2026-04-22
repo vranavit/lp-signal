@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ChevronDown, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,15 @@ export type OutreachRow = SignalWithPlan & {
   } | null;
 };
 
+export type PlanUnfundedRow = {
+  plan_id: string;
+  plan_name: string;
+  country: string;
+  slug: string | null;
+  as_of_date: string;
+  unfunded_usd: number;
+};
+
 type Direction = "new" | "increase" | "decrease" | "unknown";
 type SizeBucket = "all" | "small" | "mid" | "large";
 
@@ -23,7 +33,17 @@ const DEFAULT_STATE = {
   sizeBucket: "all" as SizeBucket,
   direction: "all" as string,
   dateRange: "60" as string,
+  minUnfundedUsd: 0,
 };
+
+// Threshold options expressed in USD; UI presents short labels.
+const UNFUNDED_THRESHOLDS: { value: number; label: string }[] = [
+  { value: 0, label: "Any unfunded" },
+  { value: 100_000_000, label: "≥ $100M" },
+  { value: 500_000_000, label: "≥ $500M" },
+  { value: 1_000_000_000, label: "≥ $1B" },
+  { value: 5_000_000_000, label: "≥ $5B" },
+];
 
 function directionFor(r: OutreachRow): Direction {
   if (r.signal_type === 1) return "new";
@@ -62,8 +82,23 @@ function directionBadgeClass(d: Direction): string {
   return "bg-bg-subtle text-ink-faint border-line";
 }
 
-export function OutreachWorkspace({ rows }: { rows: OutreachRow[] }) {
+export function OutreachWorkspace({
+  rows,
+  planUnfunded,
+}: {
+  rows: OutreachRow[];
+  planUnfunded: PlanUnfundedRow[];
+}) {
   const [state, setState] = useState(DEFAULT_STATE);
+
+  const visibleUnfunded = useMemo(
+    () => planUnfunded.filter((p) => p.unfunded_usd >= state.minUnfundedUsd),
+    [planUnfunded, state.minUnfundedUsd],
+  );
+  const totalUnfunded = useMemo(
+    () => visibleUnfunded.reduce((acc, p) => acc + p.unfunded_usd, 0),
+    [visibleUnfunded],
+  );
 
   const enriched = useMemo(
     () =>
@@ -163,6 +198,88 @@ export function OutreachWorkspace({ rows }: { rows: OutreachRow[] }) {
 
   return (
     <div className="space-y-3">
+      {/* Unfunded budget — by plan, with threshold filter */}
+      <section className="card-surface">
+        <div className="px-3 py-2.5 border-b border-line flex items-center gap-3 flex-wrap">
+          <div className="flex-1 min-w-[180px]">
+            <div className="text-[12px] font-medium text-ink">
+              Private-markets unfunded budget by plan
+            </div>
+            <div className="text-[11px] text-ink-faint">
+              Σ (target − actual) × AUM across PE/Infra/Credit/RE/VC, latest
+              CAFR snapshot per plan.
+            </div>
+          </div>
+          <Select
+            value={String(state.minUnfundedUsd)}
+            onChange={(v) =>
+              setState((s) => ({ ...s, minUnfundedUsd: Number(v) }))
+            }
+            options={UNFUNDED_THRESHOLDS.map((t) => ({
+              value: String(t.value),
+              label: t.label,
+            }))}
+          />
+          <div className="text-right">
+            <div className="text-[10.5px] text-ink-faint uppercase tracking-wide">
+              Total
+            </div>
+            <div className="num tabular-nums text-[14px] font-semibold text-ink leading-none">
+              {formatUSD(totalUnfunded)}
+            </div>
+          </div>
+        </div>
+        {visibleUnfunded.length === 0 ? (
+          <div className="px-4 py-4 text-center text-[12px] text-ink-muted">
+            No plans meet the unfunded budget threshold yet. Ingest more
+            CAFRs (or lower the threshold) to surface targets.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[13px]">
+              <thead>
+                <tr className="border-b border-line text-ink-faint">
+                  <Th>Plan</Th>
+                  <Th className="w-[80px]">Country</Th>
+                  <Th className="w-[120px]">As of</Th>
+                  <Th className="text-right w-[160px]">Unfunded ($)</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleUnfunded.map((p) => (
+                  <tr
+                    key={p.plan_id}
+                    className="h-10 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02] hover:bg-bg-hover transition-colors duration-150"
+                  >
+                    <td className="px-3 align-middle text-[13px] text-ink">
+                      {p.slug ? (
+                        <Link
+                          href={`/pensions/${p.slug}`}
+                          className="hover:text-accent-hi hover:underline"
+                        >
+                          {p.plan_name}
+                        </Link>
+                      ) : (
+                        p.plan_name
+                      )}
+                    </td>
+                    <td className="px-3 align-middle num text-[12px] text-ink-muted">
+                      {p.country}
+                    </td>
+                    <td className="px-3 align-middle num text-[11.5px] text-ink-muted">
+                      {p.as_of_date}
+                    </td>
+                    <td className="px-3 align-middle text-right num tabular-nums text-[13px] text-ink font-medium">
+                      {formatUSD(p.unfunded_usd)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       {/* Filter bar */}
       <div className="card-surface flex flex-wrap items-center gap-2 px-2.5 py-2">
         <Select

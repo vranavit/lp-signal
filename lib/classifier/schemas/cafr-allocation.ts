@@ -19,13 +19,46 @@ export const ALLOCATION_ASSET_CLASSES = [
 
 const assetClassEnum = z.enum(ALLOCATION_ASSET_CLASSES);
 
+// Sonnet occasionally returns large dollar amounts as strings (e.g.
+// "500000000000" or "$500B") despite the tool schema declaring integer.
+// Accept either shape via a union; clean+parse the string variant.
+// Treat the literal strings "null" / "none" / "" as null — Sonnet sometimes
+// stringifies missing-value sentinels.
+const isNullLike = (v: string): boolean =>
+  /^\s*(null|none|n\/a|—|-)?\s*$/i.test(v);
+
+const stringToIntOrNull = (min: number) =>
+  z.string().transform((v, ctx) => {
+    if (isNullLike(v)) return null;
+    const cleaned = v.replace(/[^0-9.-]/g, "").trim();
+    const n = Number(cleaned);
+    if (!Number.isFinite(n) || n < min) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `could not parse "${v}" as integer >= ${min}`,
+      });
+      return z.NEVER;
+    }
+    return Math.round(n);
+  });
+
+const coercedInt = z.union([
+  z.number().int().nonnegative(),
+  stringToIntOrNull(0),
+]);
+
+const coercedPositiveInt = z.union([
+  z.number().int().positive(),
+  stringToIntOrNull(1),
+]);
+
 const allocationSchema = z.object({
   asset_class: assetClassEnum,
   target_pct: z.number().min(0).max(100),
   target_min_pct: z.number().min(0).max(100).nullable().optional(),
   target_max_pct: z.number().min(0).max(100).nullable().optional(),
   actual_pct: z.number().min(0).max(100).nullable().optional(),
-  actual_usd: z.number().int().nonnegative().nullable().optional(),
+  actual_usd: coercedInt.nullable().optional(),
   source_page: z.number().int().min(1),
   source_quote: z.string().min(1),
   confidence: z.number().min(0).max(1),
@@ -33,7 +66,7 @@ const allocationSchema = z.object({
 
 export const cafrAllocationResponseSchema = z.object({
   allocations: z.array(allocationSchema).default([]),
-  total_plan_aum_usd: z.number().int().positive().nullable().optional(),
+  total_plan_aum_usd: coercedPositiveInt.nullable().optional(),
 });
 
 export type CafrAllocation = z.infer<typeof allocationSchema>;

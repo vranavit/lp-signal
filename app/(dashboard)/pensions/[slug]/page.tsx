@@ -3,6 +3,11 @@ import { ChevronLeft } from "lucide-react";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUSD, formatDate } from "@/lib/utils";
+import {
+  privateMarketsUnfundedUsd,
+  PRIVATE_MARKETS_CLASSES,
+  unfundedUsd,
+} from "@/lib/relevance/unfunded";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +64,28 @@ export default async function PensionProfilePage({
   const totalAum =
     latest.find((r) => r.total_plan_aum_usd)?.total_plan_aum_usd ?? null;
 
+  // Unfunded budget = (target − actual) / 100 × AUM, capped at zero, summed
+  // across private-markets asset classes. This is the cold-email headline.
+  const headlineUnfunded = privateMarketsUnfundedUsd(latest);
+  const perClassUnfunded: Array<{ asset_class: string; unfunded_usd: number }> =
+    latest
+      .filter((r) =>
+        (PRIVATE_MARKETS_CLASSES as readonly string[]).includes(r.asset_class),
+      )
+      .map((r) => ({ asset_class: r.asset_class, unfunded_usd: unfundedUsd(r) }))
+      .filter((r) => r.unfunded_usd > 0)
+      .sort((a, b) => b.unfunded_usd - a.unfunded_usd);
+
+  // Detected policy changes for this plan (most recent first).
+  const { data: policyChanges } = await supabase
+    .from("allocation_policy_changes")
+    .select(
+      "id, asset_class, previous_target_pct, new_target_pct, change_pp, change_direction, as_of_date_previous, as_of_date_new, implied_usd_delta",
+    )
+    .eq("plan_id", plan.id)
+    .order("as_of_date_new", { ascending: false })
+    .order("asset_class", { ascending: true });
+
   // Signal recent activity — link to the board-minutes signals for this plan.
   const { count: signalsCount } = await supabase
     .from("signals")
@@ -93,6 +120,43 @@ export default async function PensionProfilePage({
           </div>
         </div>
       </div>
+
+      {/* Headline unfunded budget — only show if we have private-markets data. */}
+      {headlineUnfunded > 0 ? (
+        <section className="card-surface px-4 py-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-[12px] text-ink-muted">
+                Private-markets unfunded budget
+              </div>
+              <div className="num tabular-nums text-[24px] font-semibold text-ink mt-0.5 leading-none">
+                {formatUSD(headlineUnfunded)}
+              </div>
+              <div className="text-[11px] text-ink-faint mt-1">
+                Sum of (target − actual) × AUM across PE / Infra / Credit / RE / VC.
+                Underweight only; overweights capped at zero.
+              </div>
+            </div>
+            {perClassUnfunded.length > 0 ? (
+              <div className="flex flex-wrap gap-3 max-w-[60%] justify-end">
+                {perClassUnfunded.map((b) => (
+                  <div
+                    key={b.asset_class}
+                    className="border border-line rounded-sm px-2.5 py-1.5 min-w-[88px]"
+                  >
+                    <div className="text-[10.5px] text-ink-faint uppercase tracking-wide">
+                      {b.asset_class}
+                    </div>
+                    <div className="num tabular-nums text-[13px] text-ink font-medium leading-tight">
+                      {formatUSD(b.unfunded_usd)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {/* Asset Allocation */}
       <section className="card-surface">
@@ -133,6 +197,96 @@ export default async function PensionProfilePage({
           <AllocationTable rows={latest} totalAum={totalAum} />
         )}
       </section>
+
+      {/* Policy changes — only render section if there's data to show. */}
+      {policyChanges && policyChanges.length > 0 ? (
+        <section className="card-surface">
+          <div className="px-4 py-3 border-b border-line">
+            <div className="text-[13px] font-medium text-ink">
+              Policy changes
+            </div>
+            <div className="mt-0.5 text-[12px] text-ink-muted">
+              Target allocation moves between consecutive CAFR snapshots.
+              Increases (green) point to net new deployment budget; decreases
+              (red) signal program wind-downs or rebalances.
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[13px]">
+              <thead>
+                <tr className="border-b border-line text-ink-faint">
+                  <Th>Asset Class</Th>
+                  <Th className="text-right w-[120px]">Previous</Th>
+                  <Th className="text-right w-[120px]">New</Th>
+                  <Th className="text-right w-[100px]">Δ (pp)</Th>
+                  <Th className="text-right w-[140px]">Implied $</Th>
+                  <Th className="text-right w-[180px]">Period</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {policyChanges.map((c) => {
+                  const isInc = c.change_direction === "increase";
+                  const isDec = c.change_direction === "decrease";
+                  return (
+                    <tr
+                      key={c.id}
+                      className="h-11 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02]"
+                    >
+                      <td className="px-4 py-0 align-middle text-ink">
+                        {c.asset_class}
+                      </td>
+                      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-muted">
+                        {fmtPct(Number(c.previous_target_pct))}
+                      </td>
+                      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink">
+                        {fmtPct(Number(c.new_target_pct))}
+                      </td>
+                      <td className="px-4 py-0 align-middle text-right">
+                        <span
+                          className={
+                            "num tabular-nums font-medium " +
+                            (isInc
+                              ? "text-green-700 dark:text-green-400"
+                              : isDec
+                              ? "text-red-700 dark:text-red-400"
+                              : "text-ink-muted")
+                          }
+                        >
+                          {Number(c.change_pp) > 0 ? "+" : ""}
+                          {fmtPct(Number(c.change_pp))}
+                        </span>
+                      </td>
+                      <td className="px-4 py-0 align-middle text-right">
+                        {c.implied_usd_delta != null ? (
+                          <span
+                            className={
+                              "num tabular-nums " +
+                              (Number(c.implied_usd_delta) > 0
+                                ? "text-green-700 dark:text-green-400"
+                                : Number(c.implied_usd_delta) < 0
+                                ? "text-red-700 dark:text-red-400"
+                                : "text-ink-muted")
+                            }
+                          >
+                            {Number(c.implied_usd_delta) > 0 ? "+" : "−"}
+                            {formatUSD(Math.abs(Number(c.implied_usd_delta)))}
+                          </span>
+                        ) : (
+                          <span className="text-ink-faint">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-0 align-middle text-right num tabular-nums text-[11.5px] text-ink-muted">
+                        {formatDate(c.as_of_date_previous)} →{" "}
+                        {formatDate(c.as_of_date_new)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
