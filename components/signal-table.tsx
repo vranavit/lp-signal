@@ -1,7 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { daysAgo, formatUSD } from "@/lib/utils";
+import { daysAgo, formatPriorityScore, formatUSD } from "@/lib/utils";
 import type { SignalWithDoc } from "@/components/signals-workspace";
 
 function typeLabel(t: 1 | 2 | 3) {
@@ -39,7 +39,7 @@ function ScoreCell({ score }: { score: number }) {
       <span
         className={`num tabular-nums text-[13px] font-medium ${color}`}
       >
-        {score.toString().padStart(3, "0")}
+        {formatPriorityScore(score)}
       </span>
     </div>
   );

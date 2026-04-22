@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { formatDate, formatUSD } from "@/lib/utils";
+import {
+  formatConfidence,
+  formatDate,
+  formatPriorityScore,
+  formatUSD,
+} from "@/lib/utils";
 import type { SignalWithDoc } from "@/components/signals-workspace";
 
 function priorityTone(score: number): "hi" | "mid" | "lo" {
@@ -62,7 +67,7 @@ export function SignalDetailPanel({ signal }: { signal: SignalWithDoc | null }) 
           </Badge>
           <Badge variant={tone}>
             <span className="num tabular-nums">
-              Score {signal.priority_score}
+              Score {formatPriorityScore(signal.priority_score)}
             </span>
           </Badge>
           {signal.seed_data ? <Badge variant="seed">Seed</Badge> : null}
@@ -81,7 +86,7 @@ export function SignalDetailPanel({ signal }: { signal: SignalWithDoc | null }) 
         <DetailField label="Asset class" value={signal.asset_class ?? "—"} />
         <DetailField
           label="Confidence"
-          value={signal.confidence.toFixed(2)}
+          value={formatConfidence(signal.confidence)}
           mono
         />
 

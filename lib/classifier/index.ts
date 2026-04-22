@@ -8,6 +8,11 @@ const STORAGE_BUCKET = "documents";
 const MAX_PAGES = 100;
 const MIN_CONFIDENCE = 0.75;
 
+// Transcripts are verbatim meeting recordings — routinely 200+ pages and low
+// signal density. Phase 2 decision: skip them. Phase 3 will revisit with
+// chunking. Detection is URL-based (CalPERS uses "transcript" in the slug).
+const OUT_OF_SCOPE_URL_PATTERNS = [/\btranscript\b/i];
+
 export type ClassifyOutcome = {
   documentId: string;
   ok: boolean;
@@ -26,7 +31,7 @@ export async function classifyDocument(
   const { data: doc, error: docErr } = await supabase
     .from("documents")
     .select(
-      "id, plan_id, storage_path, meeting_date, processing_status, plan:plans!inner(id, name, tier)",
+      "id, plan_id, gp_id, document_type, storage_path, content_text, meeting_date, processing_status, source_url, plan:plans(id, name, tier), gp:gps(id, name)",
     )
     .eq("id", documentId)
     .maybeSingle();
@@ -53,11 +58,78 @@ export async function classifyDocument(
     };
   }
 
+  // Out-of-scope URL filter (transcripts, etc.). Mark as error with a clear
+  // reason so we can revisit in Phase 3 without re-running the classifier.
+  const outOfScope = OUT_OF_SCOPE_URL_PATTERNS.find((re) =>
+    re.test(doc.source_url ?? ""),
+  );
+  if (outOfScope) {
+    await supabase
+      .from("documents")
+      .update({
+        processing_status: "error",
+        error_message: `out_of_scope: transcript`,
+        processed_at: new Date().toISOString(),
+      })
+      .eq("id", documentId);
+    return {
+      documentId,
+      ok: false,
+      reason: "out_of_scope",
+      signalsExtracted: 0,
+      signalsInserted: 0,
+      tokensUsed: 0,
+    };
+  }
+
+  // Document-type branch. GP press releases go through a different flow
+  // (plain-text extraction + specialized prompt). Stubbed until the prompt
+  // is finalized with the operator — intentionally errors out so no GP
+  // press-release doc gets classified with the wrong prompt by accident.
+  if (doc.document_type === "gp_press_release") {
+    await supabase
+      .from("documents")
+      .update({
+        processing_status: "error",
+        error_message:
+          "not_implemented: gp_press_release prompt pending approval",
+        processed_at: new Date().toISOString(),
+      })
+      .eq("id", documentId);
+    return {
+      documentId,
+      ok: false,
+      reason: "gp_press_release_not_implemented",
+      signalsExtracted: 0,
+      signalsInserted: 0,
+      tokensUsed: 0,
+    };
+  }
+
   const plan = doc.plan as unknown as {
     id: string;
     name: string;
     tier: number | null;
-  };
+  } | null;
+
+  if (!plan) {
+    await supabase
+      .from("documents")
+      .update({
+        processing_status: "error",
+        error_message: "pdf_flow_requires_plan_id",
+        processed_at: new Date().toISOString(),
+      })
+      .eq("id", documentId);
+    return {
+      documentId,
+      ok: false,
+      reason: "missing_plan",
+      signalsExtracted: 0,
+      signalsInserted: 0,
+      tokensUsed: 0,
+    };
+  }
 
   await supabase
     .from("documents")

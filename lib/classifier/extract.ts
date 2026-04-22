@@ -6,7 +6,7 @@ import {
   type ClassifierResponse,
 } from "./schema";
 
-export const CLASSIFIER_MODEL = "claude-sonnet-4-20250514";
+export const CLASSIFIER_MODEL = "claude-sonnet-4-6";
 
 export type ExtractArgs = {
   pdfBase64: string;

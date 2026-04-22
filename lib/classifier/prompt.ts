@@ -98,6 +98,20 @@ Type-3 \`fields\` object must have these exact keys:
 - Educational / training sessions
 - Reviews of existing commitments with no new action or new information
 - Pipeline summaries that name GPs but do not identify a specific committed dollar amount
+- **Aggregate program statistics.** Any roll-up figure where the counterparty is a PROGRAM or a BUCKET rather than a single identifiable firm is NOISE, regardless of dollar amount. Examples that must be rejected:
+  - "$2B allocated to 11 emerging managers"
+  - "$6.3B to 27 diverse managers"
+  - "$100B to Climate Solutions by 2030"
+  - "Total allocated to diverse managers: $X"
+  - "Program-level commitment of $X to the Emerging Manager Program"
+  A valid T1 requires a single identifiable GP firm (e.g., "KKR", "Blackstone") AND a single identifiable fund name. If \`gp\` would need to be a placeholder like "Multiple Emerging Managers", "Multiple", "Various", "Diverse Managers", or "Program", the signal is NOISE — do not emit it.
+
+## Hard guardrails (reject at emit-time)
+
+- T1 \`gp\` field MUST name a specific firm. If the best available value is a program label ("Multiple ...", "Diverse Managers", "Various", "Program", "Emerging Managers"), omit the signal.
+- T1 \`fund_name\` field MUST name a specific fund. If it would be a bucket ("Various Funds", "Emerging Managers Pool", "Climate Solutions"), omit the signal.
+- T1 \`amount_usd\` MUST be a non-null integer. If the document does not state the dollar amount for this specific commitment, omit the signal — do not emit with null, zero, or a placeholder.
+- T2 signals MUST have both \`old_target_pct\` and \`new_target_pct\` as numeric values stated explicitly in the document. If either is not stated as a concrete percentage, omit the signal — do not emit with null values.
 
 ## Strict output rules
 

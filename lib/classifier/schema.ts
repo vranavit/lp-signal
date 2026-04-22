@@ -30,7 +30,10 @@ const approvalTypeEnum = z.enum(APPROVAL_TYPES);
 const t1Fields = z.object({
   gp: z.string().min(1),
   fund_name: z.string().min(1),
-  amount_usd: z.number().int().nonnegative(),
+  // Must be > 0. The prompt's hard-guardrail says omit the signal if the
+  // document doesn't state the dollar amount; the schema enforces it as a
+  // second defense so zero never reaches the DB.
+  amount_usd: z.number().int().positive(),
   asset_class: assetClassEnum,
   approval_date: z.string().nullable().optional(),
   approval_type: approvalTypeEnum,
@@ -57,8 +60,11 @@ const signalSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal(3), ...commonBase, fields: t3Fields }),
 ]);
 
+// Default to [] when the tool call omits the `signals` key entirely.
+// Observed once in Phase 2 validation against Sonnet 4.6; harmless to allow
+// since an empty array matches "no qualifying signals in this document".
 export const classifierResponseSchema = z.object({
-  signals: z.array(signalSchema),
+  signals: z.array(signalSchema).default([]),
 });
 
 export type ClassifiedSignal = z.infer<typeof signalSchema>;
