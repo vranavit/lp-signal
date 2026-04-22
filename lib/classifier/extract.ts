@@ -1,11 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { buildClassifierPrompt } from "./prompt";
 import { buildGpPressReleasePrompt } from "./prompts/gp-press-release";
+import { buildCafrAllocationPrompt } from "./prompts/cafr-allocation";
 import {
   classifierResponseSchema,
   recordSignalsToolSchema,
   type ClassifierResponse,
 } from "./schema";
+import {
+  cafrAllocationResponseSchema,
+  recordAllocationsToolSchema,
+  type CafrAllocationResponse,
+} from "./schemas/cafr-allocation";
 
 export const CLASSIFIER_MODEL = "claude-sonnet-4-6";
 
@@ -70,6 +76,87 @@ async function callClassifier(
     tokensUsed: inputTokens + outputTokens,
     stopReason: message.stop_reason,
   };
+}
+
+export type CafrExtractResult = {
+  response: CafrAllocationResponse;
+  tokensUsed: number;
+  inputTokens: number;
+  outputTokens: number;
+  stopReason: string | null;
+};
+
+// Parallel to callClassifier, but talks to the CAFR-specific tool schema and
+// validates against the CAFR response shape. Allows more output tokens because
+// a CAFR can legitimately produce 10+ allocation rows plus an AUM figure.
+async function callCafrClassifier(
+  promptText: string,
+  docBlock: Anthropic.Messages.ContentBlockParam,
+): Promise<CafrExtractResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("missing ANTHROPIC_API_KEY");
+
+  const client = new Anthropic({ apiKey });
+
+  const message = await client.messages.create({
+    model: CLASSIFIER_MODEL,
+    max_tokens: 8192,
+    tools: [recordAllocationsToolSchema],
+    tool_choice: { type: "tool", name: "record_allocations" },
+    messages: [
+      {
+        role: "user",
+        content: [docBlock, { type: "text", text: promptText }],
+      },
+    ],
+  });
+
+  const toolUse = message.content.find(
+    (b): b is Extract<typeof b, { type: "tool_use" }> => b.type === "tool_use",
+  );
+  if (!toolUse || toolUse.name !== "record_allocations") {
+    throw new Error(
+      `cafr classifier did not call record_allocations tool (stop_reason=${message.stop_reason})`,
+    );
+  }
+
+  const parsed = cafrAllocationResponseSchema.safeParse(toolUse.input);
+  if (!parsed.success) {
+    throw new Error(
+      `cafr classifier output failed schema validation: ${parsed.error.message}`,
+    );
+  }
+
+  return {
+    response: parsed.data,
+    inputTokens: message.usage.input_tokens,
+    outputTokens: message.usage.output_tokens,
+    tokensUsed: message.usage.input_tokens + message.usage.output_tokens,
+    stopReason: message.stop_reason,
+  };
+}
+
+export type ExtractCafrArgs = {
+  pdfBase64: string;
+  planName: string;
+  fiscalYearEnd: string | null;
+};
+
+export async function extractAllocationsFromCafrPdf(
+  args: ExtractCafrArgs,
+): Promise<CafrExtractResult> {
+  const prompt = buildCafrAllocationPrompt({
+    planName: args.planName,
+    fiscalYearEnd: args.fiscalYearEnd,
+  });
+  return callCafrClassifier(prompt, {
+    type: "document",
+    source: {
+      type: "base64",
+      media_type: "application/pdf",
+      data: args.pdfBase64,
+    },
+  });
 }
 
 export type ExtractFromPdfArgs = {

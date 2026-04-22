@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUSD, formatDate } from "@/lib/utils";
 
@@ -8,7 +9,7 @@ export default async function PlansPage() {
   const { data } = await supabase
     .from("plans")
     .select(
-      "id, name, country, aum_usd, tier, scrape_method, last_scraped_at, active",
+      "id, name, country, aum_usd, tier, scrape_method, last_scraped_at, active, scrape_config",
     )
     .order("aum_usd", { ascending: false });
 
@@ -40,13 +41,30 @@ export default async function PlansPage() {
               </tr>
             </thead>
             <tbody>
-              {plans.map((p) => (
+              {plans.map((p) => {
+                const slug =
+                  p.scrape_config &&
+                  typeof p.scrape_config === "object" &&
+                  typeof (p.scrape_config as Record<string, unknown>).key ===
+                    "string"
+                    ? ((p.scrape_config as Record<string, unknown>).key as string)
+                    : null;
+                return (
                 <tr
                   key={p.id}
                   className="h-11 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02] hover:bg-bg-hover transition-colors duration-150"
                 >
                   <td className="px-4 py-0 align-middle text-[13px] text-ink">
-                    {p.name}
+                    {slug ? (
+                      <Link
+                        href={`/pensions/${slug}`}
+                        className="hover:text-accent-hi hover:underline"
+                      >
+                        {p.name}
+                      </Link>
+                    ) : (
+                      p.name
+                    )}
                   </td>
                   <td className="px-4 py-0 align-middle num text-[12.5px] text-ink-muted">
                     {p.country}
@@ -67,7 +85,8 @@ export default async function PlansPage() {
                     {p.active ? "Yes" : "No"}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

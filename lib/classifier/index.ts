@@ -4,15 +4,28 @@ import {
   CLASSIFIER_MODEL,
   extractSignalsFromPdf,
   extractSignalsFromText,
+  extractAllocationsFromCafrPdf,
   type ExtractResult,
 } from "./extract";
 import { PROMPT_VERSION } from "./prompt";
 import { GP_PROMPT_VERSION } from "./prompts/gp-press-release";
+import { CAFR_PROMPT_VERSION } from "./prompts/cafr-allocation";
 import { computePriorityScore } from "./score";
 import type { ClassifiedSignal } from "./schema";
+import type { CafrAllocation } from "./schemas/cafr-allocation";
 
 const STORAGE_BUCKET = "documents";
 const MAX_PAGES = 100;
+// CAFRs run 150–300 pages typically; NYSCRF's is 310 and CalPERS' Annual
+// Investment Report is 440. Allow up to 500 for document_type === 'cafr'.
+// The Anthropic 32 MB request limit is still the hard ceiling — documents
+// larger than that are swapped to a smaller investment-focused companion.
+const CAFR_MAX_PAGES = 500;
+
+// Confidence-tiered routing for CAFR allocations — mirrors the signals tier
+// thresholds so users see the same Accept / Preliminary / Rejected buckets.
+const ALLOCATION_ACCEPT_CONFIDENCE = 0.85;
+const ALLOCATION_PRELIMINARY_CONFIDENCE = 0.7;
 
 // Confidence-tiered routing (see docs/proposals/confidence-tiered-auto-approval.md
 // and supabase/migrations/20260421000009_signals_preliminary.sql).
@@ -87,6 +100,7 @@ export async function classifyDocument(
   const gp = doc.gp as unknown as { id: string; name: string } | null;
 
   const isPressRelease = doc.document_type === "gp_press_release";
+  const isCafr = doc.document_type === "cafr";
 
   // Pre-flight validation (before marking status = processing). Per-route:
   //   pension PDF: requires plan + not a transcript URL.
@@ -168,6 +182,11 @@ export async function classifyDocument(
     .eq("id", documentId);
 
   try {
+    // CAFR path diverges early — it writes to pension_allocations, not signals.
+    if (isCafr) {
+      return await classifyCafr(supabase, doc, plan as { id: string; name: string; tier: number | null });
+    }
+
     let extract: ExtractResult;
     let pageCount: number | undefined;
 
@@ -404,5 +423,167 @@ function buildRejectedRow(
     rejection_reason,
     model_version: CLASSIFIER_MODEL,
     prompt_version: origin.prompt_version,
+  };
+}
+
+// ── CAFR allocation extraction ──────────────────────────────────────────────
+// Writes to pension_allocations (not signals). Reuses the same auto-approval
+// confidence bands; allocations in the 0.70–0.85 band land as preliminary=true.
+// Sub-0.70 rows are dropped with a console warning (no dedicated
+// rejected_allocations table — add only if drift analysis demands it).
+
+type CafrDoc = {
+  id: string;
+  plan_id: string;
+  storage_path: string | null;
+  meeting_date: string | null;
+  source_url: string | null;
+};
+
+async function classifyCafr(
+  supabase: SupabaseClient,
+  doc: CafrDoc,
+  plan: { id: string; name: string; tier: number | null },
+): Promise<ClassifyOutcome> {
+  if (!doc.storage_path) {
+    await markDocError(supabase, doc.id, "cafr_missing_storage_path");
+    return zeroOutcome(doc.id, "cafr_missing_storage_path");
+  }
+
+  const { data: blob, error: dlErr } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .download(doc.storage_path);
+  if (dlErr || !blob) {
+    throw new Error(`storage download failed: ${dlErr?.message ?? "no blob"}`);
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+
+  let pageCount = 0;
+  try {
+    const pdf = await PDFDocument.load(bytes, {
+      ignoreEncryption: true,
+      throwOnInvalidObject: false,
+    });
+    pageCount = pdf.getPageCount();
+  } catch (err) {
+    throw new Error(
+      `cafr_pdf_parse_failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  if (pageCount > CAFR_MAX_PAGES) {
+    await markDocError(
+      supabase,
+      doc.id,
+      `too_long: ${pageCount} pages (max ${CAFR_MAX_PAGES})`,
+    );
+    return { ...zeroOutcome(doc.id, "too_long"), pages: pageCount };
+  }
+
+  const pdfBase64 = Buffer.from(bytes).toString("base64");
+  const extract = await extractAllocationsFromCafrPdf({
+    pdfBase64,
+    planName: plan.name,
+    fiscalYearEnd: doc.meeting_date,
+  });
+  const { response, tokensUsed } = extract;
+
+  const accepted: CafrAllocation[] = [];
+  const preliminary: CafrAllocation[] = [];
+  const dropped: CafrAllocation[] = [];
+
+  for (const a of response.allocations) {
+    if (a.confidence < ALLOCATION_PRELIMINARY_CONFIDENCE) {
+      dropped.push(a);
+      continue;
+    }
+    if (a.confidence >= ALLOCATION_ACCEPT_CONFIDENCE) accepted.push(a);
+    else preliminary.push(a);
+  }
+
+  const toInsert = [...accepted, ...preliminary].map((a) => ({
+    plan_id: plan.id,
+    as_of_date: doc.meeting_date,
+    asset_class: a.asset_class,
+    target_pct: a.target_pct,
+    target_min_pct: a.target_min_pct ?? null,
+    target_max_pct: a.target_max_pct ?? null,
+    actual_pct: a.actual_pct ?? null,
+    actual_usd: a.actual_usd ?? null,
+    total_plan_aum_usd: response.total_plan_aum_usd ?? null,
+    source_document_id: doc.id,
+    source_page: a.source_page,
+    source_quote: a.source_quote,
+    confidence: a.confidence,
+    preliminary: a.confidence < ALLOCATION_ACCEPT_CONFIDENCE,
+    prompt_version: CAFR_PROMPT_VERSION,
+  }));
+
+  let insertedCount = 0;
+  if (toInsert.length > 0) {
+    const { error, count } = await supabase
+      .from("pension_allocations")
+      .insert(toInsert, { count: "exact" });
+    if (error) throw new Error(`allocation_insert_failed: ${error.message}`);
+    insertedCount = count ?? toInsert.length;
+  }
+
+  if (dropped.length > 0) {
+    console.warn(
+      `[classifier/cafr] dropped ${dropped.length} allocations below confidence threshold ` +
+        `(doc=${doc.id}): ${dropped.map((d) => `${d.asset_class}@${d.confidence.toFixed(2)}`).join(", ")}`,
+    );
+  }
+
+  await supabase
+    .from("documents")
+    .update({
+      processing_status: "complete",
+      processed_at: new Date().toISOString(),
+      api_tokens_used: tokensUsed,
+      error_message: null,
+    })
+    .eq("id", doc.id);
+
+  return {
+    documentId: doc.id,
+    ok: true,
+    signalsExtracted: response.allocations.length,
+    signalsInserted: insertedCount,
+    signalsAccepted: accepted.length,
+    signalsPreliminary: preliminary.length,
+    signalsRejected: dropped.length,
+    tokensUsed,
+    pages: pageCount,
+    confidences: response.allocations.map((a) => a.confidence),
+  };
+}
+
+async function markDocError(
+  supabase: SupabaseClient,
+  documentId: string,
+  message: string,
+): Promise<void> {
+  await supabase
+    .from("documents")
+    .update({
+      processing_status: "error",
+      error_message: message,
+      processed_at: new Date().toISOString(),
+    })
+    .eq("id", documentId);
+}
+
+function zeroOutcome(documentId: string, reason: string): ClassifyOutcome {
+  return {
+    documentId,
+    ok: false,
+    reason,
+    signalsExtracted: 0,
+    signalsInserted: 0,
+    signalsAccepted: 0,
+    signalsPreliminary: 0,
+    signalsRejected: 0,
+    tokensUsed: 0,
   };
 }
