@@ -15,6 +15,7 @@ export type SignalWithDoc = SignalWithPlan & {
     source_url: string;
     meeting_date: string | null;
   } | null;
+  relevance_score?: number;
 };
 
 const DEFAULT_STATE: FilterState = {
@@ -23,6 +24,7 @@ const DEFAULT_STATE: FilterState = {
   planId: "all",
   dateRange: "30",
   minPriority: 0,
+  minRelevance: 40,
   hidePreliminary: false,
 };
 
@@ -59,6 +61,7 @@ export function SignalsWorkspace({ rows }: { rows: SignalWithDoc[] }) {
         return false;
       if (state.planId !== "all" && r.plan.id !== state.planId) return false;
       if (r.priority_score < state.minPriority) return false;
+      if ((r.relevance_score ?? 0) < state.minRelevance) return false;
       if (state.hidePreliminary && r.preliminary) return false;
       if (cutoff && new Date(r.created_at).getTime() < cutoff) return false;
       if (q) {

@@ -21,11 +21,22 @@ import { fetchWithDefaults } from "./http";
  */
 export const CALSTRS_INDEX_CURRENT_URL =
   "https://www.calstrs.com/board-meetings";
+// Private Equity Portfolio Performance page — hosts the authoritative
+// fund-by-fund PE report (CalSTRSPrivateEquityPerformanceReportFYE{YYYY}.pdf)
+// that lists every committed GP, NAV, vintage, etc. Per-meeting INV items
+// rarely contain commitments; this page does.
+export const CALSTRS_PE_PERFORMANCE_URL =
+  "https://www.calstrs.com/private-equity-portfolio-performance";
 const CALSTRS_ORIGIN = "https://www.calstrs.com";
 const STORAGE_BUCKET = "documents";
 
 const MEETING_HREF_RE = /^\/(\d{4})-(\d{2})-(\d{2})-board-meeting-[a-z]+-\d{4}\/?$/i;
-const INV_PDF_HREF_RE = /^\/files\/[a-z0-9]+\/INV[+]/i;
+// Matches INV+... (Investment Committee items), semi... (Semi-Annual PE
+// Activity Report when posted under a meeting), and CalSTRSPrivateEquity...
+// (the canonical portfolio report on the PE performance page). Accepts both
+// relative (/files/...) and absolute (https://www.calstrs.com/files/...) hrefs.
+const INV_PDF_HREF_RE =
+  /(?:^|\/)files\/[a-z0-9]+\/(INV[+]|semi|CalSTRS.*(?:PrivateEquity|PE))/i;
 
 export type CalstrsScrapeResult = {
   meetingsConsidered: number;
@@ -59,6 +70,24 @@ export async function scrapeCalSTRS(
   };
 
   const meetings = await discoverCalstrsMeetings(monthsBack, opts.now);
+  // Augment with the PE Performance page as a synthetic "meeting" — it hosts
+  // the fund-by-fund PE report separately from per-meeting board packets.
+  try {
+    const peRes = await fetchWithDefaults(CALSTRS_PE_PERFORMANCE_URL);
+    if (peRes.ok) {
+      const peHtml = await peRes.text();
+      const pePdfs = extractCalstrsInvPdfUrls(peHtml);
+      if (pePdfs.length > 0) {
+        const year = (opts.now ?? new Date()).getUTCFullYear();
+        meetings.push({
+          url: CALSTRS_PE_PERFORMANCE_URL,
+          meetingDate: `${year - 1}-12-31`, // FYE fallback
+        });
+      }
+    }
+  } catch {
+    // non-fatal; normal meeting crawl still runs
+  }
   result.meetingsConsidered = meetings.length;
 
   for (const m of meetings) {

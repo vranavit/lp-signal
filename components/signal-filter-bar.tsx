@@ -10,6 +10,7 @@ export type FilterState = {
   planId: string;
   dateRange: string;
   minPriority: number;
+  minRelevance: number;
   hidePreliminary: boolean;
 };
 
@@ -73,11 +74,32 @@ export function SignalFilterBar({
           onChange={(e) =>
             setState((s) => ({ ...s, minPriority: Number(e.target.value) }))
           }
-          className="w-24 accent-accent cursor-pointer"
+          className="w-20 accent-accent cursor-pointer"
           aria-label="Minimum priority score"
         />
         <span className="num tabular-nums text-[12px] text-ink font-medium w-6 text-right">
           {state.minPriority}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2 h-8 pl-3 pr-1 border-l border-line">
+        <span className="text-[12px] text-ink-muted whitespace-nowrap">
+          Relevance ≥
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={state.minRelevance}
+          onChange={(e) =>
+            setState((s) => ({ ...s, minRelevance: Number(e.target.value) }))
+          }
+          className="w-20 accent-accent cursor-pointer"
+          aria-label="Minimum relevance score"
+        />
+        <span className="num tabular-nums text-[12px] text-ink font-medium w-6 text-right">
+          {state.minRelevance}
         </span>
       </div>
 

@@ -4,11 +4,27 @@ import {
   SignalsWorkspace,
   type SignalWithDoc,
 } from "@/components/signals-workspace";
+import { computeRelevance } from "@/lib/relevance/score";
 
 export const dynamic = "force-dynamic";
 
 export default async function SignalsPage() {
   const supabase = createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const profile = user
+    ? (
+        await supabase
+          .from("firm_profiles")
+          .select(
+            "asset_class_focus, check_size_min_usd, check_size_max_usd, geographic_focus",
+          )
+          .eq("user_id", user.id)
+          .maybeSingle()
+      ).data
+    : null;
 
   // Everything the classifier emits ≥ 0.70 confidence is auto-validated. The
   // `preliminary` flag splits them into accepted-for-real vs flagged-with-
@@ -23,7 +39,17 @@ export default async function SignalsPage() {
     .order("created_at", { ascending: false })
     .limit(200);
 
-  const rows = (data ?? []) as unknown as SignalWithDoc[];
+  const baseRows = (data ?? []) as unknown as SignalWithDoc[];
+  const effectiveProfile = profile ?? {
+    asset_class_focus: [],
+    check_size_min_usd: null,
+    check_size_max_usd: null,
+    geographic_focus: [],
+  };
+  const rows = baseRows.map((r) => ({
+    ...r,
+    relevance_score: computeRelevance(r, effectiveProfile).total,
+  }));
 
   const { count: preliminaryCount } = await supabase
     .from("signals")

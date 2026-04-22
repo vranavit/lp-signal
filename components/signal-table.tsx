@@ -20,6 +20,22 @@ function priorityTone(score: number): "hi" | "mid" | "lo" {
   return "lo";
 }
 
+function RelevanceCell({ score }: { score: number }) {
+  const tone =
+    score >= 70 ? "hi" : score >= 40 ? "mid" : "lo";
+  const color =
+    tone === "hi"
+      ? "text-accent-hi"
+      : tone === "mid"
+      ? "text-ink"
+      : "text-ink-faint";
+  return (
+    <span className={`num tabular-nums text-[12.5px] ${color}`}>
+      {score}
+    </span>
+  );
+}
+
 function ScoreCell({ score }: { score: number }) {
   const tone = priorityTone(score);
   const color =
@@ -72,6 +88,7 @@ export function SignalTable({
             <tr className="border-b border-line text-ink-faint">
               <Th className="text-right w-[44px]">#</Th>
               <Th className="w-[84px]">Score</Th>
+              <Th className="w-[72px]">Fit</Th>
               <Th className="w-[132px]">Type</Th>
               <Th className="w-[72px]">Asset</Th>
               <Th className="w-[180px]">Plan</Th>
@@ -108,6 +125,9 @@ export function SignalTable({
                   </td>
                   <td className="px-4 py-0 align-middle">
                     <ScoreCell score={r.priority_score} />
+                  </td>
+                  <td className="px-4 py-0 align-middle">
+                    <RelevanceCell score={r.relevance_score ?? 0} />
                   </td>
                   <td className="px-4 py-0 align-middle">
                     <Badge variant={typeBadgeVariant(r.signal_type)}>

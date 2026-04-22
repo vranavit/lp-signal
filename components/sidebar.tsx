@@ -1,5 +1,10 @@
 import Link from "next/link";
-import { Activity, Building2, Settings as SettingsIcon } from "lucide-react";
+import {
+  Activity,
+  Building2,
+  Send,
+  Settings as SettingsIcon,
+} from "lucide-react";
 
 type NavItem = {
   href: string;
@@ -7,19 +12,26 @@ type NavItem = {
   Icon: typeof Activity;
 };
 
-const items: NavItem[] = [
+const baseItems: NavItem[] = [
   { href: "/signals", label: "Signals", Icon: Activity },
   { href: "/plans", label: "Plans", Icon: Building2 },
   { href: "/settings", label: "Settings", Icon: SettingsIcon },
 ];
 
+const adminItems: NavItem[] = [
+  { href: "/outreach", label: "Outreach", Icon: Send },
+];
+
 export function Sidebar({
   active,
   userEmail,
+  isAdmin,
 }: {
   active: string;
   userEmail: string | null;
+  isAdmin?: boolean;
 }) {
+  const items = isAdmin ? [...baseItems, ...adminItems] : baseItems;
   return (
     <aside className="fixed top-0 left-0 bottom-0 w-[200px] border-r border-line bg-bg-subtle flex flex-col z-30">
       {/* Wordmark */}

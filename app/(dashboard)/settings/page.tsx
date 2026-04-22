@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { ChevronRight } from "lucide-react";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ThemeToggle } from "@/components/theme-toggle";
 
@@ -22,6 +24,23 @@ export default async function SettingsPage() {
         <Row label="Email" value={user?.email ?? "—"} />
         <Row label="User ID" value={user?.id ?? "—"} mono />
         <Row label="Last sign-in" value={user?.last_sign_in_at ?? "—"} mono />
+      </section>
+
+      <section className="card-surface">
+        <div className="px-4 py-3 border-b border-line">
+          <div className="text-[13px] font-medium text-ink">Firm profile</div>
+          <div className="mt-0.5 text-[12px] text-ink-muted">
+            Your ICP — asset class, check size, geography. Drives relevance
+            scoring on the signals feed.
+          </div>
+        </div>
+        <Link
+          href="/settings/firm-profile"
+          className="flex items-center justify-between px-4 py-3 hover:bg-bg-subtle transition-colors duration-150"
+        >
+          <span className="text-[13px] text-ink">Configure firm profile</span>
+          <ChevronRight className="h-4 w-4 text-ink-faint" strokeWidth={1.75} />
+        </Link>
       </section>
 
       <section className="card-surface">
