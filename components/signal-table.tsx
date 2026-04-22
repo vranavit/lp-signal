@@ -132,6 +132,15 @@ export function SignalTable({
                       <span className="text-[13px] text-ink truncate">
                         {r.summary}
                       </span>
+                      {r.preliminary ? (
+                        <span className="shrink-0 inline-flex items-center gap-1 text-[10.5px] text-ink-faint">
+                          <span
+                            aria-hidden
+                            className="inline-block h-1.5 w-1.5 rounded-full bg-ink-dim"
+                          />
+                          preliminary
+                        </span>
+                      ) : null}
                       {r.seed_data ? (
                         <span className="shrink-0">
                           <Badge variant="seed">Seed</Badge>

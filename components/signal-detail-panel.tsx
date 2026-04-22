@@ -70,6 +70,15 @@ export function SignalDetailPanel({ signal }: { signal: SignalWithDoc | null }) 
               Score {formatPriorityScore(signal.priority_score)}
             </span>
           </Badge>
+          {signal.preliminary ? (
+            <span className="inline-flex items-center gap-1 text-[10.5px] text-ink-faint border border-line bg-bg-subtle px-1.5 h-[18px] rounded-sm">
+              <span
+                aria-hidden
+                className="inline-block h-1.5 w-1.5 rounded-full bg-ink-dim"
+              />
+              preliminary
+            </span>
+          ) : null}
           {signal.seed_data ? <Badge variant="seed">Seed</Badge> : null}
         </div>
       </div>

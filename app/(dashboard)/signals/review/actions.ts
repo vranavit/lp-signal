@@ -18,7 +18,9 @@ function invalidate() {
   revalidatePath("/signals");
 }
 
-export async function approveSignal(formData: FormData) {
+// Confirm a preliminary signal: clear the flag so it shows up in the main
+// dashboard without the "preliminary" caveat.
+export async function confirmPreliminary(formData: FormData) {
   await requireUser();
   const id = String(formData.get("id") ?? "");
   if (!id) throw new Error("missing_id");
@@ -26,26 +28,57 @@ export async function approveSignal(formData: FormData) {
   const admin = createSupabaseAdminClient();
   const { error } = await admin
     .from("signals")
-    .update({ validated_at: new Date().toISOString() })
+    .update({ preliminary: false })
     .eq("id", id);
-  if (error) throw new Error(`approve_failed: ${error.message}`);
+  if (error) throw new Error(`confirm_failed: ${error.message}`);
 
   invalidate();
 }
 
-export async function rejectSignal(formData: FormData) {
+// Reject a preliminary signal: move it to rejected_signals (with reason
+// "operator_reject") and delete it from signals. Wrapped in an admin-client
+// sequence — we don't have cross-table transactions here, so on insert
+// failure we abort before deleting.
+export async function rejectPreliminary(formData: FormData) {
   await requireUser();
   const id = String(formData.get("id") ?? "");
   if (!id) throw new Error("missing_id");
 
   const admin = createSupabaseAdminClient();
-  const { error } = await admin.from("signals").delete().eq("id", id);
-  if (error) throw new Error(`reject_failed: ${error.message}`);
+
+  const { data: row, error: fetchErr } = await admin
+    .from("signals")
+    .select(
+      "id, document_id, plan_id, signal_type, confidence, asset_class, summary, fields, source_page, source_quote, prompt_version",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) throw new Error(`reject_fetch_failed: ${fetchErr.message}`);
+  if (!row) throw new Error("signal_not_found");
+
+  const { error: insErr } = await admin.from("rejected_signals").insert({
+    document_id: row.document_id,
+    plan_id: row.plan_id,
+    signal_type: row.signal_type,
+    confidence: row.confidence,
+    asset_class: row.asset_class,
+    summary: row.summary,
+    fields: row.fields,
+    source_page: row.source_page,
+    source_quote: row.source_quote,
+    rejection_reason: "operator_reject",
+    prompt_version: row.prompt_version,
+  });
+  if (insErr) throw new Error(`reject_insert_failed: ${insErr.message}`);
+
+  const { error: delErr } = await admin.from("signals").delete().eq("id", id);
+  if (delErr) throw new Error(`reject_delete_failed: ${delErr.message}`);
 
   invalidate();
 }
 
-export async function editAndApproveSignal(formData: FormData) {
+// Edit a preliminary signal inline and confirm it in one action.
+export async function editAndConfirmPreliminary(formData: FormData) {
   await requireUser();
   const id = String(formData.get("id") ?? "");
   const summary = String(formData.get("summary") ?? "").trim();
@@ -68,12 +101,11 @@ export async function editAndApproveSignal(formData: FormData) {
     );
   }
 
-  // Keep commitment_amount_usd in sync if T1 fields.amount_usd changed.
   const patch: Record<string, unknown> = {
     summary,
     source_quote: sourceQuote || null,
     fields,
-    validated_at: new Date().toISOString(),
+    preliminary: false,
   };
   if (typeof fields.amount_usd === "number") {
     patch.commitment_amount_usd = fields.amount_usd;

@@ -23,6 +23,7 @@ const DEFAULT_STATE: FilterState = {
   planId: "all",
   dateRange: "30",
   minPriority: 0,
+  hidePreliminary: false,
 };
 
 export function SignalsWorkspace({ rows }: { rows: SignalWithDoc[] }) {
@@ -58,6 +59,7 @@ export function SignalsWorkspace({ rows }: { rows: SignalWithDoc[] }) {
         return false;
       if (state.planId !== "all" && r.plan.id !== state.planId) return false;
       if (r.priority_score < state.minPriority) return false;
+      if (state.hidePreliminary && r.preliminary) return false;
       if (cutoff && new Date(r.created_at).getTime() < cutoff) return false;
       if (q) {
         const hay = [

@@ -10,9 +10,9 @@ import {
   isAmountKey,
 } from "@/lib/utils";
 import {
-  approveSignal,
-  editAndApproveSignal,
-  rejectSignal,
+  confirmPreliminary,
+  editAndConfirmPreliminary,
+  rejectPreliminary,
 } from "@/app/(dashboard)/signals/review/actions";
 
 export type ReviewSignal = {
@@ -100,12 +100,12 @@ export function SignalReviewCard({ signal }: { signal: ReviewSignal }) {
                 run(async () => {
                   const fd = new FormData();
                   fd.set("id", signal.id);
-                  await approveSignal(fd);
+                  await confirmPreliminary(fd);
                 })
               }
             >
               <Check className="h-3.5 w-3.5" strokeWidth={2} />
-              Approve
+              Confirm
             </ActionButton>
             <ActionButton
               variant="neutral"
@@ -119,12 +119,16 @@ export function SignalReviewCard({ signal }: { signal: ReviewSignal }) {
               variant="reject"
               disabled={pending}
               onClick={() => {
-                if (!confirm("Delete this signal? This cannot be undone."))
+                if (
+                  !confirm(
+                    "Reject this signal? It will move to the rejection log for prompt tuning.",
+                  )
+                )
                   return;
                 run(async () => {
                   const fd = new FormData();
                   fd.set("id", signal.id);
-                  await rejectSignal(fd);
+                  await rejectPreliminary(fd);
                 });
               }}
             >
@@ -182,7 +186,7 @@ export function SignalReviewCard({ signal }: { signal: ReviewSignal }) {
         <form
           action={(fd) =>
             run(async () => {
-              await editAndApproveSignal(fd);
+              await editAndConfirmPreliminary(fd);
             })
           }
           className="p-4 space-y-3"
@@ -218,7 +222,7 @@ export function SignalReviewCard({ signal }: { signal: ReviewSignal }) {
             </ActionButton>
             <ActionButton type="submit" variant="approve" disabled={pending}>
               <Check className="h-3.5 w-3.5" strokeWidth={2} />
-              Save & approve
+              Save & confirm
             </ActionButton>
           </div>
         </form>

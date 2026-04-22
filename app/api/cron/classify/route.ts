@@ -63,6 +63,12 @@ export async function GET(request: NextRequest) {
 
   const signalsInserted = results.reduce((a, r) => a + r.signalsInserted, 0);
   const signalsExtracted = results.reduce((a, r) => a + r.signalsExtracted, 0);
+  const signalsAccepted = results.reduce((a, r) => a + r.signalsAccepted, 0);
+  const signalsPreliminary = results.reduce(
+    (a, r) => a + r.signalsPreliminary,
+    0,
+  );
+  const signalsRejected = results.reduce((a, r) => a + r.signalsRejected, 0);
   const tokensUsed = results.reduce((a, r) => a + r.tokensUsed, 0);
   const okCount = results.filter((r) => r.ok).length;
 
@@ -74,6 +80,9 @@ export async function GET(request: NextRequest) {
     failed: results.length - okCount,
     signalsExtracted,
     signalsInserted,
+    signalsAccepted,
+    signalsPreliminary,
+    signalsRejected,
     tokensUsed,
     results,
   });

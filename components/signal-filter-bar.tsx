@@ -10,6 +10,7 @@ export type FilterState = {
   planId: string;
   dateRange: string;
   minPriority: number;
+  hidePreliminary: boolean;
 };
 
 export function SignalFilterBar({
@@ -79,6 +80,30 @@ export function SignalFilterBar({
           {state.minPriority}
         </span>
       </div>
+
+      <button
+        type="button"
+        role="switch"
+        aria-checked={state.hidePreliminary}
+        onClick={() =>
+          setState((s) => ({ ...s, hidePreliminary: !s.hidePreliminary }))
+        }
+        className={
+          "inline-flex items-center gap-1.5 h-8 px-2.5 text-[12px] border rounded-sm transition-colors duration-150 cursor-pointer " +
+          (state.hidePreliminary
+            ? "bg-bg-subtle border-line-strong text-ink"
+            : "bg-bg border-line text-ink-muted hover:border-line-strong hover:text-ink")
+        }
+      >
+        <span
+          aria-hidden
+          className={
+            "inline-block h-1.5 w-1.5 rounded-full " +
+            (state.hidePreliminary ? "bg-ink" : "bg-ink-dim")
+          }
+        />
+        Hide preliminary
+      </button>
     </div>
   );
 }

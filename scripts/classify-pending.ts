@@ -40,8 +40,11 @@ async function main() {
       ? `conf=[${out.confidences.map((c) => c.toFixed(2)).join(",")}]`
       : "";
     const status = out.ok ? "ok" : `FAIL:${out.reason}`;
+    const tierSummary = out.ok
+      ? `acc=${out.signalsAccepted} prelim=${out.signalsPreliminary} rej=${out.signalsRejected}`
+      : "";
     console.log(
-      `  [${i + 1}/${docs.length}] ${status} pages=${out.pages ?? "-"} tokens=${out.tokensUsed} signals=${out.signalsInserted} ${confSummary} (${ms}ms)`,
+      `  [${i + 1}/${docs.length}] ${status} pages=${out.pages ?? "-"} tokens=${out.tokensUsed} ${tierSummary} ${confSummary} (${ms}ms)`,
     );
     console.log(`           ${d.source_url}`);
   }

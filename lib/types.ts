@@ -44,6 +44,9 @@ export type SignalRow = {
   source_quote: string | null;
   commitment_amount_usd: number | null;
   seed_data: boolean;
+  preliminary: boolean;
+  prompt_version: string | null;
+  validated_at: string | null;
   created_at: string;
 };
 

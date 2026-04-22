@@ -15,6 +15,17 @@
 // 2026-04-21 update: T1 expanded to cover Delegation-of-Authority and
 // staff-level commitments disclosed to the board. New approval_type field
 // distinguishes them. Confidence reflects approval pathway.
+//
+// 2026-04-21 (v2.1): confidence-tiered auto-approval. Classifier now emits
+// any signal it would score ≥ 0.50; the router in lib/classifier/index.ts
+// decides accepted (≥0.85 & high priority) / preliminary (≥0.70) /
+// rejected (<0.70, logged for tuning). Emitting the 0.50–0.70 band gives
+// rejected_signals meaningful tuning data instead of an empty table.
+
+// Version string stamped on every row the classifier produces (both signals
+// and rejected_signals). Bump whenever the prompt body or thresholds change
+// so we can correlate rejection rates with prompt versions.
+export const PROMPT_VERSION = "v2.1";
 
 export function buildClassifierPrompt(args: {
   planName: string;
@@ -116,7 +127,7 @@ Type-3 \`fields\` object must have these exact keys:
 ## Strict output rules
 
 - Call the record_signals tool exactly once with { "signals": [ ... ] }. If no qualifying signals, pass an empty array.
-- Only include signals with confidence >= 0.75. Below that threshold, omit entirely.
+- Only include signals with confidence >= 0.50. Below that threshold, omit entirely. Downstream routing decides what to accept, flag, or reject for tuning — your job is to emit an honest calibrated score, not to self-censor borderline cases above 0.50.
 - confidence (0–1): calibrated probability this is a true signal of the stated type, per the calibration guidance above.
 - evidence_strength (0–100, integer): strength of textual evidence (specificity, explicitness, proximity to executed action). Ignore plan size and recency — those are applied downstream.
 - summary: one sentence, plain English.

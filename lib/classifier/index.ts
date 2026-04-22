@@ -1,12 +1,18 @@
 import { PDFDocument } from "pdf-lib";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { extractSignals } from "./extract";
+import { CLASSIFIER_MODEL, extractSignals } from "./extract";
+import { PROMPT_VERSION } from "./prompt";
 import { computePriorityScore } from "./score";
 import type { ClassifiedSignal } from "./schema";
 
 const STORAGE_BUCKET = "documents";
 const MAX_PAGES = 100;
-const MIN_CONFIDENCE = 0.75;
+
+// Confidence-tiered routing (see docs/proposals/confidence-tiered-auto-approval.md
+// and supabase/migrations/20260421000009_signals_preliminary.sql).
+const ACCEPT_CONFIDENCE = 0.85;
+const PRELIMINARY_CONFIDENCE = 0.70;
+const ACCEPT_PRIORITY = 40;
 
 // Transcripts are verbatim meeting recordings — routinely 200+ pages and low
 // signal density. Phase 2 decision: skip them. Phase 3 will revisit with
@@ -19,6 +25,9 @@ export type ClassifyOutcome = {
   reason?: string;
   signalsExtracted: number;
   signalsInserted: number;
+  signalsAccepted: number;
+  signalsPreliminary: number;
+  signalsRejected: number;
   tokensUsed: number;
   pages?: number;
   confidences?: number[];
@@ -43,6 +52,9 @@ export async function classifyDocument(
       reason: docErr?.message ?? "document_not_found",
       signalsExtracted: 0,
       signalsInserted: 0,
+      signalsAccepted: 0,
+      signalsPreliminary: 0,
+      signalsRejected: 0,
       tokensUsed: 0,
     };
   }
@@ -54,6 +66,9 @@ export async function classifyDocument(
       reason: `skip_status_${doc.processing_status}`,
       signalsExtracted: 0,
       signalsInserted: 0,
+      signalsAccepted: 0,
+      signalsPreliminary: 0,
+      signalsRejected: 0,
       tokensUsed: 0,
     };
   }
@@ -78,6 +93,9 @@ export async function classifyDocument(
       reason: "out_of_scope",
       signalsExtracted: 0,
       signalsInserted: 0,
+      signalsAccepted: 0,
+      signalsPreliminary: 0,
+      signalsRejected: 0,
       tokensUsed: 0,
     };
   }
@@ -102,6 +120,9 @@ export async function classifyDocument(
       reason: "gp_press_release_not_implemented",
       signalsExtracted: 0,
       signalsInserted: 0,
+      signalsAccepted: 0,
+      signalsPreliminary: 0,
+      signalsRejected: 0,
       tokensUsed: 0,
     };
   }
@@ -127,6 +148,9 @@ export async function classifyDocument(
       reason: "missing_plan",
       signalsExtracted: 0,
       signalsInserted: 0,
+      signalsAccepted: 0,
+      signalsPreliminary: 0,
+      signalsRejected: 0,
       tokensUsed: 0,
     };
   }
@@ -176,6 +200,9 @@ export async function classifyDocument(
         reason: "too_long",
         signalsExtracted: 0,
         signalsInserted: 0,
+        signalsAccepted: 0,
+        signalsPreliminary: 0,
+        signalsRejected: 0,
         tokensUsed: 0,
         pages: pageCount,
       };
@@ -189,19 +216,45 @@ export async function classifyDocument(
       meetingDate: doc.meeting_date,
     });
 
-    const accepted = response.signals.filter(
-      (s) => s.confidence >= MIN_CONFIDENCE,
-    );
+    const signalRows: ReturnType<typeof buildSignalRow>[] = [];
+    const rejectedRows: ReturnType<typeof buildRejectedRow>[] = [];
+    let acceptedCount = 0;
+    let preliminaryCount = 0;
 
-    const rows = accepted.map((s) => buildSignalRow(s, doc, plan));
+    for (const s of response.signals) {
+      if (s.confidence < PRELIMINARY_CONFIDENCE) {
+        rejectedRows.push(buildRejectedRow(s, doc, "low_confidence"));
+        continue;
+      }
+      const row = buildSignalRow(s, doc, plan);
+      const isAccepted =
+        s.confidence >= ACCEPT_CONFIDENCE && row.priority_score >= ACCEPT_PRIORITY;
+      row.preliminary = !isAccepted;
+      if (isAccepted) acceptedCount++;
+      else preliminaryCount++;
+      signalRows.push(row);
+    }
 
     let insertedCount = 0;
-    if (rows.length > 0) {
+    if (signalRows.length > 0) {
       const { error: insErr, count } = await supabase
         .from("signals")
-        .insert(rows, { count: "exact" });
+        .insert(signalRows, { count: "exact" });
       if (insErr) throw new Error(`signal_insert_failed: ${insErr.message}`);
-      insertedCount = count ?? rows.length;
+      insertedCount = count ?? signalRows.length;
+    }
+
+    if (rejectedRows.length > 0) {
+      const { error: rejErr } = await supabase
+        .from("rejected_signals")
+        .insert(rejectedRows);
+      // A rejection-log failure shouldn't poison document completion — the
+      // signals that did land are still correct. Log and keep going.
+      if (rejErr) {
+        console.warn(
+          `rejected_signals_insert_failed doc=${doc.id}: ${rejErr.message}`,
+        );
+      }
     }
 
     await supabase
@@ -219,6 +272,9 @@ export async function classifyDocument(
       ok: true,
       signalsExtracted: response.signals.length,
       signalsInserted: insertedCount,
+      signalsAccepted: acceptedCount,
+      signalsPreliminary: preliminaryCount,
+      signalsRejected: rejectedRows.length,
       tokensUsed,
       pages: pageCount,
       confidences: response.signals.map((s) => s.confidence),
@@ -239,6 +295,9 @@ export async function classifyDocument(
       reason: message,
       signalsExtracted: 0,
       signalsInserted: 0,
+      signalsAccepted: 0,
+      signalsPreliminary: 0,
+      signalsRejected: 0,
       tokensUsed: 0,
     };
   }
@@ -263,6 +322,9 @@ function buildSignalRow(
     meeting_date: doc.meeting_date,
   });
 
+  // All auto-routed rows are stamped validated_at at insert time — there is
+  // no longer a pending-review queue. The `preliminary` flag is set by the
+  // caller after priority_score is known.
   return {
     document_id: doc.id,
     plan_id: doc.plan_id,
@@ -276,5 +338,29 @@ function buildSignalRow(
     source_quote: s.source_quote,
     commitment_amount_usd: s.type === 1 ? s.fields.amount_usd : null,
     seed_data: false,
+    validated_at: new Date().toISOString(),
+    preliminary: false,
+    prompt_version: PROMPT_VERSION,
+  };
+}
+
+function buildRejectedRow(
+  s: ClassifiedSignal,
+  doc: { id: string; plan_id: string },
+  rejection_reason: string,
+) {
+  return {
+    document_id: doc.id,
+    plan_id: doc.plan_id,
+    signal_type: s.type,
+    confidence: s.confidence,
+    asset_class: s.fields.asset_class,
+    summary: s.summary,
+    fields: s.fields,
+    source_page: s.source_page,
+    source_quote: s.source_quote,
+    rejection_reason,
+    model_version: CLASSIFIER_MODEL,
+    prompt_version: PROMPT_VERSION,
   };
 }
