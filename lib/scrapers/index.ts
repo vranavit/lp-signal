@@ -1,5 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { scrapeCalPERS } from "./calpers";
+import { scrapeNYSCRF } from "./nyscrf";
+import { scrapeWSIB } from "./wsib";
+import { scrapeMichigan } from "./michigan";
+import { scrapePAPsers } from "./pa-psers";
+
+export { scrapeCalPERS } from "./calpers";
+export { scrapeNYSCRF, nyscrfMonthCandidates } from "./nyscrf";
+export { scrapeWSIB, discoverPmcCandidates } from "./wsib";
+export { scrapeMichigan, discoverMichiganReports } from "./michigan";
+export { scrapePAPsers, generatePsersMeetingCandidates } from "./pa-psers";
 
 export type ScrapeResultSummary = {
   plan: string;
@@ -31,6 +41,46 @@ export async function runScraperForPlan(
     case "calpers": {
       const r = await scrapeCalPERS(supabase, { planId: plan.id });
       return { ...base, ...r };
+    }
+    case "nyscrf": {
+      const r = await scrapeNYSCRF(supabase, { planId: plan.id });
+      return {
+        ...base,
+        pdfsFound: r.pdfsFetched,
+        inserted: r.inserted,
+        skipped: r.skipped,
+        errors: r.errors,
+      };
+    }
+    case "wsib": {
+      const r = await scrapeWSIB(supabase, { planId: plan.id });
+      return {
+        ...base,
+        pdfsFound: r.pdfsFetched,
+        inserted: r.inserted,
+        skipped: r.skipped,
+        errors: r.errors,
+      };
+    }
+    case "michigan": {
+      const r = await scrapeMichigan(supabase, { planId: plan.id });
+      return {
+        ...base,
+        pdfsFound: r.pdfsFetched,
+        inserted: r.inserted,
+        skipped: r.skipped,
+        errors: r.errors,
+      };
+    }
+    case "pa_psers": {
+      const r = await scrapePAPsers(supabase, { planId: plan.id });
+      return {
+        ...base,
+        pdfsFound: r.pdfsFetched,
+        inserted: r.inserted,
+        skipped: r.skipped,
+        errors: r.errors,
+      };
     }
     default:
       return {

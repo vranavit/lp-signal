@@ -8,6 +8,7 @@
 import * as cheerio from "cheerio";
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { fetchText } from "./http";
 
 export type ExtractedArticle = {
   url: string;
@@ -34,26 +35,8 @@ export function matchedKeywords(text: string): string[] {
   return GP_KEYWORDS.filter((re) => re.test(text)).map((re) => re.source);
 }
 
-export const GP_USER_AGENT =
-  "Mozilla/5.0 (compatible; lp-signal/0.1; +https://github.com/vranavit/lp-signal)";
-
 export async function fetchHtml(url: string, timeoutMs = 20_000): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "user-agent": GP_USER_AGENT,
-        accept: "text/html,application/xhtml+xml",
-      },
-      redirect: "follow",
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-    return await res.text();
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetchText(url, { timeoutMs });
 }
 
 export function cleanText(raw: string): string {

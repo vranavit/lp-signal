@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { fetchWithDefaults } from "./http";
 
 /**
  * CalPERS publishes its Investment Committee materials under the Board Meetings
@@ -15,7 +16,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const CALPERS_BOARD_MEETINGS_INDEX =
   "https://www.calpers.ca.gov/about/board/board-meetings";
 
-const USER_AGENT = "lp-signal/0.1 (+https://github.com/vranavit/lp-signal)";
 const STORAGE_BUCKET = "documents";
 
 type ScrapeResult = {
@@ -119,11 +119,7 @@ async function discoverCalPERSPdfUrls({
   maxPdfs: number;
   maxMeetings: number;
 }): Promise<string[]> {
-  const indexRes = await fetch(CALPERS_BOARD_MEETINGS_INDEX, {
-    headers: { "user-agent": USER_AGENT },
-    cache: "no-store",
-    redirect: "follow",
-  });
+  const indexRes = await fetchWithDefaults(CALPERS_BOARD_MEETINGS_INDEX);
   if (!indexRes.ok) {
     throw new Error(
       `CalPERS index fetch failed: ${indexRes.status} ${indexRes.statusText}`,
@@ -156,11 +152,7 @@ async function discoverCalPERSPdfUrls({
 
   for (const meetingUrl of meetingUrls.slice(0, maxMeetings)) {
     try {
-      const meetingRes = await fetch(meetingUrl, {
-        headers: { "user-agent": USER_AGENT },
-        cache: "no-store",
-        redirect: "follow",
-      });
+      const meetingRes = await fetchWithDefaults(meetingUrl);
       if (!meetingRes.ok) continue;
 
       const $m = cheerio.load(await meetingRes.text());
@@ -192,11 +184,7 @@ async function discoverCalPERSPdfUrls({
 async function fetchAndHash(
   url: string,
 ): Promise<{ hash: string; bytes: Uint8Array; contentType: string }> {
-  const res = await fetch(url, {
-    headers: { "user-agent": USER_AGENT },
-    cache: "no-store",
-    redirect: "follow",
-  });
+  const res = await fetchWithDefaults(url);
   if (!res.ok) throw new Error(`PDF fetch failed: ${res.status} ${res.statusText}`);
   const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
   const buf = new Uint8Array(await res.arrayBuffer());
