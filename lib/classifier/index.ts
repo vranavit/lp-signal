@@ -1,7 +1,13 @@
 import { PDFDocument } from "pdf-lib";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { CLASSIFIER_MODEL, extractSignals } from "./extract";
+import {
+  CLASSIFIER_MODEL,
+  extractSignalsFromPdf,
+  extractSignalsFromText,
+  type ExtractResult,
+} from "./extract";
 import { PROMPT_VERSION } from "./prompt";
+import { GP_PROMPT_VERSION } from "./prompts/gp-press-release";
 import { computePriorityScore } from "./score";
 import type { ClassifiedSignal } from "./schema";
 
@@ -73,79 +79,80 @@ export async function classifyDocument(
     };
   }
 
-  // Out-of-scope URL filter (transcripts, etc.). Mark as error with a clear
-  // reason so we can revisit in Phase 3 without re-running the classifier.
-  const outOfScope = OUT_OF_SCOPE_URL_PATTERNS.find((re) =>
-    re.test(doc.source_url ?? ""),
-  );
-  if (outOfScope) {
-    await supabase
-      .from("documents")
-      .update({
-        processing_status: "error",
-        error_message: `out_of_scope: transcript`,
-        processed_at: new Date().toISOString(),
-      })
-      .eq("id", documentId);
-    return {
-      documentId,
-      ok: false,
-      reason: "out_of_scope",
-      signalsExtracted: 0,
-      signalsInserted: 0,
-      signalsAccepted: 0,
-      signalsPreliminary: 0,
-      signalsRejected: 0,
-      tokensUsed: 0,
-    };
-  }
-
-  // Document-type branch. GP press releases go through a different flow
-  // (plain-text extraction + specialized prompt). Stubbed until the prompt
-  // is finalized with the operator — intentionally errors out so no GP
-  // press-release doc gets classified with the wrong prompt by accident.
-  if (doc.document_type === "gp_press_release") {
-    await supabase
-      .from("documents")
-      .update({
-        processing_status: "error",
-        error_message:
-          "not_implemented: gp_press_release prompt pending approval",
-        processed_at: new Date().toISOString(),
-      })
-      .eq("id", documentId);
-    return {
-      documentId,
-      ok: false,
-      reason: "gp_press_release_not_implemented",
-      signalsExtracted: 0,
-      signalsInserted: 0,
-      signalsAccepted: 0,
-      signalsPreliminary: 0,
-      signalsRejected: 0,
-      tokensUsed: 0,
-    };
-  }
-
   const plan = doc.plan as unknown as {
     id: string;
     name: string;
     tier: number | null;
   } | null;
+  const gp = doc.gp as unknown as { id: string; name: string } | null;
 
-  if (!plan) {
+  const isPressRelease = doc.document_type === "gp_press_release";
+
+  // Pre-flight validation (before marking status = processing). Per-route:
+  //   pension PDF: requires plan + not a transcript URL.
+  //   press release: requires gp + content_text.
+  if (!isPressRelease) {
+    const outOfScope = OUT_OF_SCOPE_URL_PATTERNS.find((re) =>
+      re.test(doc.source_url ?? ""),
+    );
+    if (outOfScope) {
+      await supabase
+        .from("documents")
+        .update({
+          processing_status: "error",
+          error_message: `out_of_scope: transcript`,
+          processed_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+      return {
+        documentId,
+        ok: false,
+        reason: "out_of_scope",
+        signalsExtracted: 0,
+        signalsInserted: 0,
+        signalsAccepted: 0,
+        signalsPreliminary: 0,
+        signalsRejected: 0,
+        tokensUsed: 0,
+      };
+    }
+
+    if (!plan) {
+      await supabase
+        .from("documents")
+        .update({
+          processing_status: "error",
+          error_message: "pdf_flow_requires_plan_id",
+          processed_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+      return {
+        documentId,
+        ok: false,
+        reason: "missing_plan",
+        signalsExtracted: 0,
+        signalsInserted: 0,
+        signalsAccepted: 0,
+        signalsPreliminary: 0,
+        signalsRejected: 0,
+        tokensUsed: 0,
+      };
+    }
+  } else if (!gp || !doc.content_text) {
     await supabase
       .from("documents")
       .update({
         processing_status: "error",
-        error_message: "pdf_flow_requires_plan_id",
+        error_message: !gp
+          ? "press_release_requires_gp"
+          : "press_release_missing_content_text",
         processed_at: new Date().toISOString(),
       })
       .eq("id", documentId);
     return {
       documentId,
       ok: false,
-      reason: "missing_plan",
+      reason: !gp ? "missing_gp" : "missing_content_text",
       signalsExtracted: 0,
       signalsInserted: 0,
       signalsAccepted: 0,
@@ -161,60 +168,85 @@ export async function classifyDocument(
     .eq("id", documentId);
 
   try {
-    if (!doc.storage_path) throw new Error("document has no storage_path");
+    let extract: ExtractResult;
+    let pageCount: number | undefined;
 
-    const { data: blob, error: dlErr } = await supabase.storage
-      .from(STORAGE_BUCKET)
-      .download(doc.storage_path);
-    if (dlErr || !blob) {
-      throw new Error(`storage download failed: ${dlErr?.message ?? "no blob"}`);
-    }
-
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-
-    let pageCount = 0;
-    try {
-      const pdf = await PDFDocument.load(bytes, {
-        ignoreEncryption: true,
-        throwOnInvalidObject: false,
+    if (isPressRelease) {
+      extract = await extractSignalsFromText({
+        text: doc.content_text as string,
+        gpName: (gp as { id: string; name: string }).name,
+        publishedAt: doc.meeting_date,
       });
-      pageCount = pdf.getPageCount();
-    } catch (err) {
-      throw new Error(
-        `pdf_parse_failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+    } else {
+      if (!doc.storage_path) throw new Error("document has no storage_path");
+
+      const { data: blob, error: dlErr } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .download(doc.storage_path);
+      if (dlErr || !blob) {
+        throw new Error(
+          `storage download failed: ${dlErr?.message ?? "no blob"}`,
+        );
+      }
+
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+
+      let parsedPageCount = 0;
+      try {
+        const pdf = await PDFDocument.load(bytes, {
+          ignoreEncryption: true,
+          throwOnInvalidObject: false,
+        });
+        parsedPageCount = pdf.getPageCount();
+      } catch (err) {
+        throw new Error(
+          `pdf_parse_failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      if (parsedPageCount > MAX_PAGES) {
+        await supabase
+          .from("documents")
+          .update({
+            processing_status: "error",
+            error_message: `too_long: ${parsedPageCount} pages (max ${MAX_PAGES})`,
+            processed_at: new Date().toISOString(),
+          })
+          .eq("id", documentId);
+        return {
+          documentId,
+          ok: false,
+          reason: "too_long",
+          signalsExtracted: 0,
+          signalsInserted: 0,
+          signalsAccepted: 0,
+          signalsPreliminary: 0,
+          signalsRejected: 0,
+          tokensUsed: 0,
+          pages: parsedPageCount,
+        };
+      }
+
+      const pdfBase64 = Buffer.from(bytes).toString("base64");
+
+      extract = await extractSignalsFromPdf({
+        pdfBase64,
+        planName: (plan as { name: string }).name,
+        meetingDate: doc.meeting_date,
+      });
+      pageCount = parsedPageCount;
     }
 
-    if (pageCount > MAX_PAGES) {
-      await supabase
-        .from("documents")
-        .update({
-          processing_status: "error",
-          error_message: `too_long: ${pageCount} pages (max ${MAX_PAGES})`,
-          processed_at: new Date().toISOString(),
-        })
-        .eq("id", documentId);
-      return {
-        documentId,
-        ok: false,
-        reason: "too_long",
-        signalsExtracted: 0,
-        signalsInserted: 0,
-        signalsAccepted: 0,
-        signalsPreliminary: 0,
-        signalsRejected: 0,
-        tokensUsed: 0,
-        pages: pageCount,
-      };
-    }
+    const { response, tokensUsed } = extract;
 
-    const pdfBase64 = Buffer.from(bytes).toString("base64");
-
-    const { response, tokensUsed } = await extractSignals({
-      pdfBase64,
-      planName: plan.name,
-      meetingDate: doc.meeting_date,
-    });
+    // Origin bundles the provenance each row needs to be written correctly.
+    // Exactly one of { plan, gp } is non-null per document.
+    const origin = {
+      plan_id: isPressRelease ? null : (plan as { id: string }).id,
+      gp_id: isPressRelease ? (gp as { id: string }).id : null,
+      plan_tier: isPressRelease ? null : (plan as { tier: number | null }).tier,
+      prompt_version: isPressRelease ? GP_PROMPT_VERSION : PROMPT_VERSION,
+    };
 
     const signalRows: ReturnType<typeof buildSignalRow>[] = [];
     const rejectedRows: ReturnType<typeof buildRejectedRow>[] = [];
@@ -223,10 +255,10 @@ export async function classifyDocument(
 
     for (const s of response.signals) {
       if (s.confidence < PRELIMINARY_CONFIDENCE) {
-        rejectedRows.push(buildRejectedRow(s, doc, "low_confidence"));
+        rejectedRows.push(buildRejectedRow(s, doc, origin, "low_confidence"));
         continue;
       }
-      const row = buildSignalRow(s, doc, plan);
+      const row = buildSignalRow(s, doc, origin);
       const isAccepted =
         s.confidence >= ACCEPT_CONFIDENCE && row.priority_score >= ACCEPT_PRIORITY;
       row.preliminary = !isAccepted;
@@ -303,10 +335,17 @@ export async function classifyDocument(
   }
 }
 
+type Origin = {
+  plan_id: string | null;
+  gp_id: string | null;
+  plan_tier: number | null;
+  prompt_version: string;
+};
+
 function buildSignalRow(
   s: ClassifiedSignal,
-  doc: { id: string; plan_id: string; meeting_date: string | null },
-  plan: { tier: number | null },
+  doc: { id: string; meeting_date: string | null },
+  origin: Origin,
 ) {
   const amountForScore =
     s.type === 1
@@ -318,7 +357,7 @@ function buildSignalRow(
   const priority_score = computePriorityScore({
     type: s.type,
     amount_usd: amountForScore ?? null,
-    plan_tier: plan.tier,
+    plan_tier: origin.plan_tier,
     meeting_date: doc.meeting_date,
   });
 
@@ -327,7 +366,8 @@ function buildSignalRow(
   // caller after priority_score is known.
   return {
     document_id: doc.id,
-    plan_id: doc.plan_id,
+    plan_id: origin.plan_id,
+    gp_id: origin.gp_id,
     signal_type: s.type,
     confidence: s.confidence,
     priority_score,
@@ -340,18 +380,20 @@ function buildSignalRow(
     seed_data: false,
     validated_at: new Date().toISOString(),
     preliminary: false,
-    prompt_version: PROMPT_VERSION,
+    prompt_version: origin.prompt_version,
   };
 }
 
 function buildRejectedRow(
   s: ClassifiedSignal,
-  doc: { id: string; plan_id: string },
+  doc: { id: string },
+  origin: Origin,
   rejection_reason: string,
 ) {
   return {
     document_id: doc.id,
-    plan_id: doc.plan_id,
+    plan_id: origin.plan_id,
+    gp_id: origin.gp_id,
     signal_type: s.type,
     confidence: s.confidence,
     asset_class: s.fields.asset_class,
@@ -361,6 +403,6 @@ function buildRejectedRow(
     source_quote: s.source_quote,
     rejection_reason,
     model_version: CLASSIFIER_MODEL,
-    prompt_version: PROMPT_VERSION,
+    prompt_version: origin.prompt_version,
   };
 }

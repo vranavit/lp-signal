@@ -21,11 +21,24 @@
 // decides accepted (≥0.85 & high priority) / preliminary (≥0.70) /
 // rejected (<0.70, logged for tuning). Emitting the 0.50–0.70 band gives
 // rejected_signals meaningful tuning data instead of an empty table.
+//
+// 2026-04-21 (v2.2): scope tightening for private-markets-only coverage.
+//   - Reject internal index allocations (FTSE/MSCI/S&P/Bloomberg/custom
+//     climate index, etc.) — these are passive public-equity allocations
+//     where the "manager" is an index provider, not a GP. The FTSE Russell
+//     climate transition row at CalPERS was the canonical false positive.
+//   - Reject public-equity mandates (Global Public Equity, Public Equity,
+//     Global Equity, Passive Equity). An IR team at a PE/Infra/Credit/RE/VC
+//     buyer does not care about $1B to Connor Clark & Lunn EM equities.
+//   - Drop 'Other' from the asset_class enum. If the model can't confidently
+//     place a commitment in PE/Infra/Credit/RE/VC, 'Other' was the escape
+//     hatch that let public-equity mandates leak through. Force the model
+//     to omit instead of emitting 'Other'.
 
 // Version string stamped on every row the classifier produces (both signals
 // and rejected_signals). Bump whenever the prompt body or thresholds change
 // so we can correlate rejection rates with prompt versions.
-export const PROMPT_VERSION = "v2.1";
+export const PROMPT_VERSION = "v2.2";
 
 export function buildClassifierPrompt(args: {
   planName: string;
@@ -36,6 +49,8 @@ export function buildClassifierPrompt(args: {
     : "";
 
   return `You are an expert pension fund analyst specializing in private markets. Your job is to extract high-confidence LP allocation signals from pension board documents. False positives destroy customer trust — when in doubt, classify as noise.
+
+**Scope: private markets only.** Private Equity, Infrastructure, Private Debt/Credit, Real Estate/Real Assets, and Venture Capital. Public equities (global equity, passive equity, index-tracking mandates, custom indexes) are out of scope regardless of dollar size. Readers are IR professionals at private-markets GPs; public-equity commitments are noise to them.
 
 This document is from ${args.planName}.${meetingLine} The plan name is already known — do not re-extract it.
 
@@ -59,7 +74,7 @@ Type-1 \`fields\` object must have these exact keys:
 - gp (string): GP name, e.g., "Blackstone"
 - fund_name (string): fund name, e.g., "Blackstone Strategic Partners Fund IX"
 - amount_usd (integer): commitment size in USD, normalized ("$500 million" → 500000000)
-- asset_class (string): one of "PE", "Infra", "Credit", "RE", "VC", "Other"
+- asset_class (string): one of "PE", "Infra", "Credit", "RE", "VC" — private markets only. Do NOT emit "Other"; if no private-markets class fits, omit the signal.
 - approval_date (string|null): ISO 8601 YYYY-MM-DD if stated, else null
 - approval_type (string): one of "board_vote", "delegation_of_authority", "staff_commitment"
 
@@ -79,7 +94,7 @@ Required indicators (at least 2):
 - Board action language ("the Board voted", "approved the revised policy", "adopted the new asset allocation")
 
 Type-2 \`fields\` object must have these exact keys:
-- asset_class (string): one of "PE", "Infra", "Credit", "RE", "VC", "Other"
+- asset_class (string): one of "PE", "Infra", "Credit", "RE", "VC" — private markets only. Do NOT emit "Other"; if no private-markets class fits, omit the signal.
 - old_target_pct (number): previous target, e.g., 10.0
 - new_target_pct (number): new target, e.g., 13.0
 - timeline (string|null): implementation period as stated in the document, else null
@@ -95,7 +110,7 @@ Required indicators (all three):
 - Asset class affected
 
 Type-3 \`fields\` object must have these exact keys:
-- asset_class (string): one of "PE", "Infra", "Credit", "RE", "VC", "Other"
+- asset_class (string): one of "PE", "Infra", "Credit", "RE", "VC" — private markets only. Do NOT emit "Other"; if no private-markets class fits, omit the signal.
 - prior_year_pacing_usd (integer): prior year amount in USD
 - new_year_pacing_usd (integer): new year amount in USD
 - pct_change (number): (new − prior) / prior × 100, signed
@@ -109,6 +124,8 @@ Type-3 \`fields\` object must have these exact keys:
 - Educational / training sessions
 - Reviews of existing commitments with no new action or new information
 - Pipeline summaries that name GPs but do not identify a specific committed dollar amount
+- **Internal index allocations.** If the commitment is to an index (FTSE, MSCI, S&P, Bloomberg, Russell, a custom climate index, a custom ESG index, etc.) or is described as "tracking" or "allocated to the [X] index" or "[X] Custom Index", REJECT. These are internal passive public-equity allocations where the named entity (e.g., FTSE Russell) is an index provider, not an external fund manager, and they do not belong in a private-markets signal feed. Canonical example that must be rejected: "CalPERS allocated \$5B to a custom FTSE climate transition index" — FTSE Russell is an index provider, this is an internal passive allocation, not a GP commitment.
+- **Public-equity mandates.** If the document context — section heading, program name, or the surrounding paragraph — indicates "Global Public Equity", "Public Equity", "Global Equity", "Passive Equity", "Public Markets", "Active Equity", or any public-equity sleeve, REJECT the signal entirely regardless of dollar size or how specific the manager is. This tool covers private markets only. Concrete examples that must be rejected: "\$1B Global Public Equity mandate to Connor Clark & Lunn Emerging Markets", "\$500M Global Equity allocation to Lazard Emerging Markets".
 - **Aggregate program statistics.** Any roll-up figure where the counterparty is a PROGRAM or a BUCKET rather than a single identifiable firm is NOISE, regardless of dollar amount. Examples that must be rejected:
   - "$2B allocated to 11 emerging managers"
   - "$6.3B to 27 diverse managers"
@@ -120,8 +137,10 @@ Type-3 \`fields\` object must have these exact keys:
 ## Hard guardrails (reject at emit-time)
 
 - T1 \`gp\` field MUST name a specific firm. If the best available value is a program label ("Multiple ...", "Diverse Managers", "Various", "Program", "Emerging Managers"), omit the signal.
-- T1 \`fund_name\` field MUST name a specific fund. If it would be a bucket ("Various Funds", "Emerging Managers Pool", "Climate Solutions"), omit the signal.
+- T1 \`gp\` field MUST name a GP, not an index provider. Reject if \`gp\` would be "FTSE", "FTSE Russell", "MSCI", "S&P", "S&P Dow Jones", "Bloomberg", "Russell", or any other index provider.
+- T1 \`fund_name\` field MUST name a specific fund. If it would be a bucket ("Various Funds", "Emerging Managers Pool", "Climate Solutions"), omit the signal. Also reject if \`fund_name\` reads like an index ("... Custom Index", "... Transition Index", "... ESG Index", "... Tracking").
 - T1 \`amount_usd\` MUST be a non-null integer. If the document does not state the dollar amount for this specific commitment, omit the signal — do not emit with null, zero, or a placeholder.
+- \`asset_class\` MUST be one of: PE, Infra, Credit, RE, VC. If you cannot determine which of these applies, omit the signal. Do NOT emit "Other" as asset_class — it's a symptom of misclassification (typically a public-equity or unclassifiable mandate leaking through).
 - T2 signals MUST have both \`old_target_pct\` and \`new_target_pct\` as numeric values stated explicitly in the document. If either is not stated as a concrete percentage, omit the signal — do not emit with null values.
 
 ## Strict output rules
