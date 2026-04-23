@@ -2,7 +2,17 @@
  * One-off runner for the Brookfield press-release scraper.
  *
  * Usage:
- *   pnpm tsx --env-file=.env.local scripts/scrape-brookfield.ts [daysBack=90] [maxKept=20]
+ *   pnpm tsx --env-file=.env.local scripts/scrape-brookfield.ts
+ *   pnpm tsx --env-file=.env.local scripts/scrape-brookfield.ts --days=365
+ *   pnpm tsx --env-file=.env.local scripts/scrape-brookfield.ts --days=365 --max-kept=100 --max-probed=200
+ *
+ * Flags (all optional):
+ *   --days=N        (default 90)   Ignore articles older than N days.
+ *   --max-kept=N    (default 20)   Stop after inserting N articles (safety cap).
+ *   --max-probed=N  (default 50)   Articles to deep-fetch from the index list.
+ *
+ * Legacy positional args still work:
+ *   pnpm tsx scripts/scrape-brookfield.ts 90 20
  */
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -12,15 +22,48 @@ import {
   scrapeGpPressReleases,
 } from "@/lib/scrapers/gp-press-release";
 
+function parseArgs() {
+  const args = process.argv.slice(2);
+  let days = 90;
+  let maxKept = 20;
+  let maxProbed = 50;
+
+  const positional: string[] = [];
+  for (const a of args) {
+    if (a.startsWith("--days=")) {
+      days = Number(a.slice("--days=".length));
+    } else if (a.startsWith("--max-kept=")) {
+      maxKept = Number(a.slice("--max-kept=".length));
+    } else if (a.startsWith("--max-probed=")) {
+      maxProbed = Number(a.slice("--max-probed=".length));
+    } else if (!a.startsWith("--")) {
+      positional.push(a);
+    }
+  }
+  if (positional.length > 0) days = Number(positional[0]) || days;
+  if (positional.length > 1) maxKept = Number(positional[1]) || maxKept;
+
+  if (!Number.isFinite(days) || days <= 0) {
+    throw new Error(`invalid --days=${days}`);
+  }
+  if (!Number.isFinite(maxKept) || maxKept <= 0) {
+    throw new Error(`invalid --max-kept=${maxKept}`);
+  }
+  return { days, maxKept, maxProbed };
+}
+
 async function main() {
-  const daysBack = Number(process.argv[2] ?? "90");
-  const maxKept = Number(process.argv[3] ?? "20");
+  const { days, maxKept, maxProbed } = parseArgs();
+
+  console.log(
+    `[brookfield] days=${days} maxKept=${maxKept} maxProbed=${maxProbed}`,
+  );
 
   const supabase = createSupabaseAdminClient();
   const r = await scrapeGpPressReleases(supabase, brookfieldConfig, {
-    daysBack,
+    daysBack: days,
     maxKept,
-    maxProbed: 50,
+    maxProbed,
   });
 
   console.log(`\n== Brookfield scrape summary ==`);
