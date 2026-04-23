@@ -199,6 +199,7 @@ export function SignalTable({
                         date={r.created_at}
                         cutoffDays={30}
                         kind="signal"
+                        signalType={r.signal_type}
                       />
                     </span>
                   </td>

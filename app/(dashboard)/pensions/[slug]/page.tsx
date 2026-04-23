@@ -276,13 +276,25 @@ export default async function PensionProfilePage({
                   aumUsd={totalAum ?? plan.aum_usd}
                 />
               </div>
-              <div className="text-[11px] text-ink-faint mt-1 flex items-center justify-end gap-1">
-                <span>as of {latestAsOf ? formatDate(latestAsOf) : "—"}</span>
-                <StaleIndicator
-                  date={latestAsOf}
-                  cutoffDays={90}
-                  kind="allocation"
-                />
+              <div
+                className="text-[11px] text-ink-faint mt-1 flex items-center justify-end gap-1 cursor-help"
+                title="Pensions typically publish CAFRs 6-12 months after fiscal year-end. This is the most recent publicly available."
+              >
+                <span>
+                  Most recent CAFR: FY{" "}
+                  <span className="num tabular-nums">
+                    {latestAsOf ? latestAsOf.slice(0, 4) : "—"}
+                  </span>
+                  {latestAsOf ? (
+                    <>
+                      {" "}
+                      · snapshot{" "}
+                      <span className="num tabular-nums">
+                        {formatDate(latestAsOf)}
+                      </span>
+                    </>
+                  ) : null}
+                </span>
               </div>
             </div>
           ) : null}
@@ -428,6 +440,7 @@ export default async function PensionProfilePage({
                             date={s.document?.meeting_date ?? s.created_at}
                             cutoffDays={30}
                             kind="signal"
+                            signalType={s.signal_type}
                           />
                         </span>
                       </td>

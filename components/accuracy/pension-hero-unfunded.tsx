@@ -18,6 +18,7 @@ export function PensionHeroUnfunded({
   aumUsd: number | null;
 }) {
   const [open, setOpen] = React.useState(false);
+  const fyLabel = asOfDate ? `FY ${asOfDate.slice(0, 4)}` : null;
   return (
     <>
       <MathModalTrigger
@@ -38,15 +39,20 @@ export function PensionHeroUnfunded({
             label: c.asset_class,
             value: c.unfunded_usd,
           }))}
-          lastRefreshed={asOfDate ? formatDate(asOfDate) : null}
+          lastRefreshed={
+            fyLabel
+              ? `${fyLabel} (snapshot as of ${formatDate(asOfDate!)})`
+              : null
+          }
           footnote={
             <>
-              Based on the most recent CAFR snapshot for this plan
-              {aumUsd
-                ? ` (plan AUM ${formatUSD(aumUsd)})`
-                : ""}
-              . Gaps are capped at zero — overweight positions contribute nothing
-              to the deployable budget.
+              Based on the most recent available CAFR
+              {fyLabel ? ` (fiscal year ${fyLabel.slice(3)})` : ""}
+              {aumUsd ? `, plan AUM ${formatUSD(aumUsd)}` : ""}. Pensions
+              typically publish CAFRs 6–12 months after fiscal year-end; new
+              CAFRs are ingested within 7 days of public release. Gaps are
+              capped at zero — overweight positions contribute nothing to the
+              deployable budget.
             </>
           }
           onClose={() => setOpen(false)}
