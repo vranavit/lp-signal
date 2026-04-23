@@ -3,6 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUSD, formatDate } from "@/lib/utils";
+import { AuditTrailTrigger } from "@/components/audit-trail-modal";
 import {
   privateMarketsUnfundedUsd,
   PRIVATE_MARKETS_CLASSES,
@@ -21,6 +22,7 @@ type Allocation = {
   actual_pct: number | null;
   actual_usd: number | null;
   total_plan_aum_usd: number | null;
+  source_document_id: string | null;
   source_page: number | null;
   source_quote: string | null;
   confidence: number;
@@ -38,7 +40,9 @@ export default async function PensionProfilePage({
   // since the total row count is tiny (~12 plans).
   const { data: plans } = await supabase
     .from("plans")
-    .select("id, name, country, aum_usd, tier, scrape_config, last_scraped_at");
+    .select(
+      "id, name, country, aum_usd, tier, scrape_config, scrape_url, last_scraped_at",
+    );
   const plan = plans?.find(
     (p) =>
       typeof p.scrape_config === "object" &&
@@ -52,7 +56,7 @@ export default async function PensionProfilePage({
   const { data: allocData } = await supabase
     .from("pension_allocations")
     .select(
-      "id, as_of_date, asset_class, target_pct, target_min_pct, target_max_pct, actual_pct, actual_usd, total_plan_aum_usd, source_page, source_quote, confidence, preliminary",
+      "id, as_of_date, asset_class, target_pct, target_min_pct, target_max_pct, actual_pct, actual_usd, total_plan_aum_usd, source_document_id, source_page, source_quote, confidence, preliminary",
     )
     .eq("plan_id", plan.id)
     .order("as_of_date", { ascending: false })
@@ -86,12 +90,52 @@ export default async function PensionProfilePage({
     .order("as_of_date_new", { ascending: false })
     .order("asset_class", { ascending: true });
 
-  // Signal recent activity — link to the board-minutes signals for this plan.
+  // Last 6 months of transaction signals from this plan (T1/T2/T3). Shown
+  // as a "Recent signals" section below the allocation table — transforms
+  // the page from a static allocation snapshot into a pension dossier.
+  const sixMonthsAgo = new Date(
+    Date.now() - 180 * 86_400_000,
+  ).toISOString();
+  const { data: signalsRecent } = await supabase
+    .from("signals")
+    .select(
+      "id, document_id, signal_type, confidence, priority_score, asset_class, summary, fields, source_page, source_quote, commitment_amount_usd, preliminary, created_at, document:documents(id, source_url, meeting_date)",
+    )
+    .eq("plan_id", plan.id)
+    .eq("seed_data", false)
+    .not("validated_at", "is", null)
+    .gte("created_at", sixMonthsAgo)
+    .order("created_at", { ascending: false })
+    .limit(25);
+
   const { count: signalsCount } = await supabase
     .from("signals")
     .select("id", { count: "exact", head: true })
     .eq("plan_id", plan.id)
     .not("validated_at", "is", null);
+
+  type RecentSignal = {
+    id: string;
+    document_id: string | null;
+    signal_type: 1 | 2 | 3;
+    asset_class: string | null;
+    summary: string;
+    fields: Record<string, unknown>;
+    source_page: number | null;
+    source_quote: string | null;
+    commitment_amount_usd: number | null;
+    preliminary: boolean;
+    created_at: string;
+    document: { id: string; source_url: string; meeting_date: string | null } | null;
+  };
+  const recentSignals = (signalsRecent ?? []) as unknown as RecentSignal[];
+
+  const planWebsite =
+    typeof plan.scrape_config === "object" && plan.scrape_config
+      ? ((plan.scrape_config as Record<string, unknown>).website as
+          | string
+          | undefined) ?? null
+      : null;
 
   return (
     <div className="space-y-4 max-w-5xl">
@@ -103,60 +147,79 @@ export default async function PensionProfilePage({
         Plans
       </Link>
 
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-[16px] font-semibold tracking-tightish text-ink leading-tight">
-            {plan.name}
-          </h1>
-          <div className="mt-1 text-[12px] text-ink-muted">
-            {plan.country} · AUM {formatUSD(plan.aum_usd)} · Tier{" "}
-            {plan.tier ?? "—"} · last scraped {formatDate(plan.last_scraped_at)}
+      {/* Hero: plan name + prominent unfunded budget headline */}
+      <section className="card-surface px-5 py-5">
+        <div className="flex items-start justify-between gap-6">
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] text-ink-faint uppercase tracking-wide">
+              {plan.country} · Tier {plan.tier ?? "—"}
+            </div>
+            <h1 className="mt-1 text-[22px] font-semibold tracking-tightish text-ink leading-tight">
+              {plan.name}
+            </h1>
+            <MetadataRow
+              plan={plan}
+              latestAsOf={latestAsOf}
+              website={planWebsite}
+            />
           </div>
-        </div>
-        <div className="text-right">
-          <div className="text-[11px] text-ink-faint">Signals</div>
-          <div className="num tabular-nums text-[20px] font-semibold text-ink">
-            {signalsCount ?? 0}
-          </div>
-        </div>
-      </div>
-
-      {/* Headline unfunded budget — only show if we have private-markets data. */}
-      {headlineUnfunded > 0 ? (
-        <section className="card-surface px-4 py-4">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="text-[12px] text-ink-muted">
-                Private-markets unfunded budget
+          {headlineUnfunded > 0 ? (
+            <div className="text-right shrink-0">
+              <div className="text-[10.5px] text-ink-faint uppercase tracking-wide">
+                Unfunded private-markets budget
               </div>
-              <div className="num tabular-nums text-[24px] font-semibold text-ink mt-0.5 leading-none">
+              <div className="num tabular-nums text-[32px] font-semibold text-ink leading-none mt-1">
                 {formatUSD(headlineUnfunded)}
               </div>
               <div className="text-[11px] text-ink-faint mt-1">
-                Sum of (target − actual) × AUM across PE / Infra / Credit / RE / VC.
-                Underweight only; overweights capped at zero.
+                as of {latestAsOf ? formatDate(latestAsOf) : "—"}
               </div>
             </div>
-            {perClassUnfunded.length > 0 ? (
-              <div className="flex flex-wrap gap-3 max-w-[60%] justify-end">
-                {perClassUnfunded.map((b) => (
-                  <div
-                    key={b.asset_class}
-                    className="border border-line rounded-sm px-2.5 py-1.5 min-w-[88px]"
-                  >
-                    <div className="text-[10.5px] text-ink-faint uppercase tracking-wide">
-                      {b.asset_class}
-                    </div>
-                    <div className="num tabular-nums text-[13px] text-ink font-medium leading-tight">
-                      {formatUSD(b.unfunded_usd)}
-                    </div>
-                  </div>
-                ))}
+          ) : null}
+        </div>
+
+        {/* Per-class unfunded chips */}
+        {perClassUnfunded.length > 0 ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {perClassUnfunded.map((b) => (
+              <div
+                key={b.asset_class}
+                className="border border-line rounded-sm px-2.5 py-1.5 min-w-[88px]"
+              >
+                <div className="text-[10.5px] text-ink-faint uppercase tracking-wide">
+                  {b.asset_class}
+                </div>
+                <div className="num tabular-nums text-[13px] text-ink font-medium leading-tight">
+                  {formatUSD(b.unfunded_usd)}
+                </div>
               </div>
-            ) : null}
+            ))}
           </div>
-        </section>
-      ) : null}
+        ) : null}
+      </section>
+
+      {/* Stat strip */}
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard
+          label="Plan AUM"
+          value={formatUSD(totalAum ?? plan.aum_usd)}
+          sublabel={latestAsOf ? `as of ${formatDate(latestAsOf)}` : undefined}
+        />
+        <StatCard
+          label="Transaction signals"
+          value={String(signalsCount ?? 0)}
+          sublabel="all time, accepted + preliminary"
+        />
+        <StatCard
+          label="Allocation rows"
+          value={String(latest.length)}
+          sublabel={
+            latestAsOf
+              ? `${latest.length === 0 ? "none" : "classes in latest policy"}`
+              : "no CAFR ingested"
+          }
+        />
+      </div>
 
       {/* Asset Allocation */}
       <section className="card-surface">
@@ -197,6 +260,97 @@ export default async function PensionProfilePage({
           <AllocationTable rows={latest} totalAum={totalAum} />
         )}
       </section>
+
+      {/* Recent transaction signals from this plan (last 6 months). */}
+      {recentSignals.length > 0 ? (
+        <section className="card-surface">
+          <div className="px-4 py-3 border-b border-line flex items-end justify-between gap-4">
+            <div>
+              <div className="text-[13px] font-medium text-ink">
+                Recent signals
+              </div>
+              <div className="mt-0.5 text-[12px] text-ink-muted">
+                Commitments, target changes, and pacing moves extracted from
+                board minutes in the last 6 months.
+              </div>
+            </div>
+            <Link
+              href={`/signals?plan=${plan.id}`}
+              className="text-[12px] text-accent-hi hover:underline"
+            >
+              All signals →
+            </Link>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[13px]">
+              <thead>
+                <tr className="border-b border-line text-ink-faint">
+                  <Th className="w-[100px]">Date</Th>
+                  <Th className="w-[56px]">Type</Th>
+                  <Th className="w-[60px]">Asset</Th>
+                  <Th>Summary</Th>
+                  <Th className="text-right w-[110px]">Amount</Th>
+                  <Th className="w-[32px]"> </Th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentSignals.map((s) => {
+                  const tag =
+                    s.signal_type === 1
+                      ? "T1"
+                      : s.signal_type === 2
+                      ? "T2"
+                      : "T3";
+                  return (
+                    <tr
+                      key={s.id}
+                      className="h-10 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02] hover:bg-bg-hover transition-colors duration-150"
+                    >
+                      <td className="px-3 align-middle num tabular-nums text-[11.5px] text-ink-muted">
+                        {formatDate(s.document?.meeting_date ?? s.created_at)}
+                      </td>
+                      <td className="px-3 align-middle text-[11px] text-ink-muted">
+                        {tag}
+                      </td>
+                      <td className="px-3 align-middle text-[12px] text-ink-muted">
+                        {s.asset_class ?? "—"}
+                      </td>
+                      <td className="px-3 align-middle">
+                        <Link
+                          href={`/signals/${s.id}`}
+                          className="text-[12.5px] text-ink hover:text-accent-hi hover:underline line-clamp-1 max-w-[480px] inline-block"
+                        >
+                          {s.summary}
+                        </Link>
+                        {s.preliminary ? (
+                          <span className="ml-2 inline-flex items-center gap-1 text-[10.5px] text-ink-faint">
+                            <span className="h-1.5 w-1.5 rounded-full bg-ink-dim inline-block" />
+                            preliminary
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-3 align-middle text-right num tabular-nums text-[12.5px] text-ink">
+                        {s.commitment_amount_usd
+                          ? formatUSD(s.commitment_amount_usd)
+                          : "—"}
+                      </td>
+                      <td className="px-2 align-middle text-right">
+                        <AuditTrailTrigger
+                          documentId={s.document_id}
+                          sourcePage={s.source_page}
+                          sourceQuote={s.source_quote}
+                          inline
+                          label=""
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
 
       {/* Policy changes — only render section if there's data to show. */}
       {policyChanges && policyChanges.length > 0 ? (
@@ -309,6 +463,7 @@ function AllocationTable({
             <Th className="text-right w-[100px]">Actual %</Th>
             <Th className="text-right w-[100px]">Gap (pp)</Th>
             <Th className="text-right w-[140px]">$ Gap</Th>
+            <Th className="w-[32px]"> </Th>
           </tr>
         </thead>
         <tbody>
@@ -390,6 +545,15 @@ function AllocationTable({
                     <span className="text-ink-faint">—</span>
                   )}
                 </td>
+                <td className="px-2 py-0 align-middle text-right">
+                  <AuditTrailTrigger
+                    documentId={r.source_document_id}
+                    sourcePage={r.source_page}
+                    sourceQuote={r.source_quote}
+                    inline
+                    label=""
+                  />
+                </td>
               </tr>
             );
           })}
@@ -401,6 +565,75 @@ function AllocationTable({
 
 function fmtPct(v: number): string {
   return `${v.toFixed(1)}%`;
+}
+
+function StatCard({
+  label,
+  value,
+  sublabel,
+}: {
+  label: string;
+  value: string;
+  sublabel?: string;
+}) {
+  return (
+    <div className="card-surface px-4 py-3">
+      <div className="text-[10.5px] text-ink-faint uppercase tracking-wide">
+        {label}
+      </div>
+      <div className="num tabular-nums text-[18px] font-semibold text-ink leading-tight mt-0.5">
+        {value}
+      </div>
+      {sublabel ? (
+        <div className="text-[11px] text-ink-faint mt-0.5">{sublabel}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function MetadataRow({
+  plan,
+  latestAsOf,
+  website,
+}: {
+  plan: {
+    scrape_url: string | null;
+    last_scraped_at: string | null;
+    aum_usd: number | null;
+  };
+  latestAsOf: string | null;
+  website: string | null;
+}) {
+  const homeUrl = website ?? plan.scrape_url ?? null;
+  return (
+    <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-muted">
+      <span>
+        AUM <span className="num tabular-nums text-ink">{formatUSD(plan.aum_usd)}</span>
+      </span>
+      {latestAsOf ? (
+        <span>
+          Latest CAFR{" "}
+          <span className="num tabular-nums text-ink">{formatDate(latestAsOf)}</span>
+        </span>
+      ) : null}
+      {plan.last_scraped_at ? (
+        <span>
+          Last scrape{" "}
+          <span className="num tabular-nums">{formatDate(plan.last_scraped_at)}</span>
+        </span>
+      ) : null}
+      {homeUrl ? (
+        <a
+          href={homeUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="text-accent-hi hover:underline"
+        >
+          Plan website ↗
+        </a>
+      ) : null}
+    </div>
+  );
 }
 
 function Th({

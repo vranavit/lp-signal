@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { AuditTrailTrigger } from "@/components/audit-trail-modal";
 import {
   formatConfidence,
   formatDate,
@@ -116,7 +117,14 @@ export function SignalDetailPanel({ signal }: { signal: SignalWithDoc | null }) 
         ) : null}
 
         <div className="px-4 py-3 border-t border-line flex flex-col gap-2">
-          {pdfUrl ? (
+          {signal.document_id ? (
+            <AuditTrailTrigger
+              documentId={signal.document_id}
+              sourcePage={signal.source_page}
+              sourceQuote={signal.source_quote}
+              label="View audit trail"
+            />
+          ) : pdfUrl ? (
             <a
               href={pdfUrl}
               target="_blank"

@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import { AuditTrailTrigger } from "@/components/audit-trail-modal";
 import { daysAgo, formatPriorityScore, formatUSD } from "@/lib/utils";
 import type { SignalWithDoc } from "@/components/signals-workspace";
 
@@ -95,6 +96,7 @@ export function SignalTable({
               <Th>Summary</Th>
               <Th className="text-right w-[104px]">Amount</Th>
               <Th className="text-right w-[56px]">Age</Th>
+              <Th className="w-[32px]"> </Th>
             </tr>
           </thead>
           <tbody>
@@ -177,6 +179,15 @@ export function SignalTable({
                     <span className="num tabular-nums text-[11.5px] text-ink-muted">
                       {daysAgo(r.created_at)}
                     </span>
+                  </td>
+                  <td className="px-2 py-0 align-middle text-right">
+                    <AuditTrailTrigger
+                      documentId={r.document_id}
+                      sourcePage={r.source_page}
+                      sourceQuote={r.source_quote}
+                      inline
+                      label=""
+                    />
                   </td>
                 </tr>
               );

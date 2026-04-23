@@ -12,6 +12,10 @@
     {
       "path": "/api/cron/preliminary-alert",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/policy-change-alert",
+      "schedule": "0 15 * * *"
     }
   ]
 }
