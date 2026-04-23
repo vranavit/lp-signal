@@ -1,6 +1,8 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { AuditTrailTrigger } from "@/components/audit-trail-modal";
 import { formatPriorityScore, formatUSD } from "@/lib/utils";
 import { ConfidenceBadge } from "@/components/accuracy/confidence-badge";
@@ -69,18 +71,31 @@ export function SignalTable({
   rows,
   onSelect,
   selectedId,
+  onClearFilters,
 }: {
   rows: SignalWithDoc[];
   onSelect?: (id: string) => void;
   selectedId?: string | null;
+  onClearFilters?: () => void;
 }) {
   if (rows.length === 0) {
     return (
-      <div className="card-surface p-10 text-center">
-        <div className="text-[13px] text-ink-muted">
-          No signals match these filters.
-        </div>
-      </div>
+      <EmptyState
+        title="No signals match these filters"
+        description="Try widening your date range, clearing a filter, or resetting to the default view."
+        actions={
+          onClearFilters ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={onClearFilters}
+            >
+              Clear all filters
+            </Button>
+          ) : undefined
+        }
+      />
     );
   }
 

@@ -144,6 +144,7 @@ export function SignalsWorkspace({ rows }: { rows: SignalWithDoc[] }) {
             rows={filtered}
             onSelect={setSelectedId}
             selectedId={selectedId}
+            onClearFilters={reset}
           />
         </div>
         <div className="w-[400px] shrink-0 hidden lg:block">

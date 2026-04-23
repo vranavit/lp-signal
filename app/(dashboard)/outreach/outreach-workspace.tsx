@@ -13,6 +13,7 @@ import { CombinationFilter } from "@/components/filters/combination-filter";
 import { useUrlFilterState } from "@/components/filters/use-url-filter-state";
 import { tierFor } from "@/components/filters/filter-state";
 import { SavedViewsMenu } from "@/components/filters/saved-views-menu";
+import { EmptyState } from "@/components/ui/empty-state";
 import type { SignalWithPlan } from "@/lib/types";
 
 export type OutreachRow = SignalWithPlan & {
@@ -333,11 +334,20 @@ export function OutreachWorkspace({
 
       {/* Table */}
       {filtered.length === 0 ? (
-        <div className="card-surface p-10 text-center">
-          <div className="text-[13px] text-ink-muted">
-            No signals match these filters.
-          </div>
-        </div>
+        <EmptyState
+          title="No signals match these filters"
+          description="Try widening your date range, clearing the confidence filter, or resetting to the default view."
+          actions={
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={reset}
+            >
+              Clear all filters
+            </Button>
+          }
+        />
       ) : (
         <div className="card-surface overflow-hidden">
           <div className="overflow-x-auto">
