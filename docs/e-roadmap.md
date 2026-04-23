@@ -44,7 +44,9 @@ Make the Allocus dashboard demo-ready without rough edges. Priority is dashboard
 2. Signal detail pages (one signal per URL, full audit trail, related signals)
 3. Public read-only share links (for demo handoff)
 
-## Phase 4: Continuous ingestion (freshness guarantee)
+## Phase 4: Continuous ingestion (freshness guarantee) — partially shipped (Day 10 Session 1)
+
+**Status:** infrastructure + per-source cron schedules + health-check + admin dashboard shipped; GP back-coverage scripted but not yet run; auto-ingestion on CAFR-landing-page changes deferred. See "Day 10 Session 1" subsection below for commit pointers and the live state.
 
 After Day 9.4 fixed the signal date display to show true event dates instead of ingestion timestamps, many signals now correctly show as stale (>30 days since event). This is accurate but creates operational pressure: Allocus is only as fresh as its last scrape.
 
@@ -90,8 +92,37 @@ The fix is continuous re-scraping — checking every tracked pension source on a
 
 - [ ] Phase 2 shipped (user-facing polish)
 - [ ] Phase 3 shipped (demo features)
-- [ ] Verified existing scrapers are all stable (no silent breakages)
+- [x] Verified existing scrapers are all stable (no silent breakages) — covered by the Day 10 Session 1 health-check cron
 - [ ] API spend model updated to reflect continuous ingestion cost
+
+### Day 10 Session 1 — shipped (2026-04-23)
+
+Commits (stacked on the Day 9.5 chain, awaiting `git push`):
+
+- `2d88de0` — **feat(scrapers): continuous re-scraping infrastructure with change detection + cron schedules**. `scrape_fingerprints` migration + `lib/scrapers/change-detection.ts` + `lib/scrapers/cron-shared.ts` (shared `runScrapeCron` wrapper) + `/api/cron/scrape-cafr` weekly heartbeat + `vercel.json` updated to 14 crons (under the 15-cron hard stop) + `docs/scraper-inventory.md`. Old `/api/cron/scrape` removed (superseded).
+- `c92a1f4` — **feat(scrapers): per-source cron endpoints for all existing scrapers**. Nine per-source routes (Blackstone, Brookfield, CalPERS, CalSTRS, NYSCRF, NYSTRS, PSERS, Michigan, WSIB) — thin wrappers over existing scraper internals via `runScrapeCron`. Staggered 15-min starting at 14:00 UTC.
+- `e549b62` — **feat(admin): ingestion health dashboard + scraper health-check cron**. `/admin/ingestion` (admin-gated, lists every fingerprint with green/yellow/red status + last-document link) + `/api/cron/scraper-health-check` (daily 19:00 UTC, Resend digest to vitek@bloorcapital when anything is stale >2× cadence).
+- `a62daf3` — **feat(scrapers): GP press release back-coverage to 365 days (Blackstone + Brookfield)**. Both `scripts/scrape-{blackstone,brookfield}.ts` now accept `--days=N`, `--max-kept=N`, `--max-probed=N` flags. 365-day backfill **not auto-run** this session — spend cap + permission posture means the user runs the two commands manually when ready.
+
+**DB migration NOT applied** — same posture as Day 9.5 H-2. Run manually:
+
+```
+set -a; source .env.local; set +a
+pnpm tsx scripts/apply-migration.ts supabase/migrations/20260501000003_scrape_fingerprints.sql
+```
+
+After the migration applies, the cron endpoints write to `scrape_fingerprints` on every invocation and `/admin/ingestion` shows live status. Until then, the page renders "No fingerprints recorded yet" and the cron routes still succeed but fingerprint writes are no-ops (caught and logged).
+
+**Covered by this session:**
+- ✅ Scheduled re-scrape crons per source — 9 pension/GP daily + 1 CAFR weekly
+- ✅ Change detection via content hash + fingerprint table
+- ✅ Per-source "last checked / last changed / summary" visible on `/admin/ingestion`
+- ✅ Scraper-health-check cron alerts on sources stale >2× expected cadence
+
+**Still deferred (Phase 4 Session 2+):**
+- Auto-trigger classifier pipeline when a CAFR landing page hash changes — currently the weekly `/api/cron/scrape-cafr` only fingerprints + alerts. Per-year URL curation for CAFR ingestion is still manual.
+- Full "structured-change alert" (page structure changed, scraper broken) — today the only signal is `last_run_ok: false` in fingerprints.
+- Classifier prompt gap fix from Day 9.5 H-3 (Gap 1: `null` numeric fields bypass omit rule) — unblocks 4 more CalPERS/WSIB docs.
 
 ### Fund fact sheet ingestion (Phase 4+)
 
