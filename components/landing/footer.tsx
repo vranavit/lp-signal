@@ -11,11 +11,6 @@ export function Footer() {
       className="relative"
       style={{ backgroundColor: "#0F1B3D", color: "#F5F5F4" }}
     >
-      <div
-        aria-hidden
-        className="absolute inset-x-0 top-0 h-[3px]"
-        style={{ backgroundColor: "#D4A94A" }}
-      />
       <div className="mx-auto max-w-[1200px] px-6 pt-14 pb-10">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-10">
           <div>

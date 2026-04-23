@@ -17,7 +17,7 @@ const config: Config = {
           "sans-serif",
         ],
         serif: [
-          "var(--font-instrument-serif)",
+          "var(--font-fraunces)",
           "ui-serif",
           "Georgia",
           "Cambria",
