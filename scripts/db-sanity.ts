@@ -9,7 +9,7 @@ async function main() {
     process.env.SUPABASE_SECRET_KEY!
   );
 
-  const tables = ['pensions', 'signals', 'pension_allocations', 'documents', 'gps', 'allocation_policy_changes', 'firm_profiles'];
+  const tables = ['plans', 'signals', 'pension_allocations', 'documents', 'gps', 'allocation_policy_changes', 'firm_profiles'];
 
   for (const t of tables) {
     const { count, error } = await supabase

@@ -153,6 +153,8 @@ Expected outcome: Oregon ingest yields ~20+ packet PDFs from the last 2 years of
 
 Post-Session 2 pension coverage: **15 plans** (13 existing + 2 new). Plans with transaction-data coverage expected to rise from 7 to 9 once Oregon + PRIM ingestion completes.
 
+**Session 2 verification closed out (2026-04-24)** with `eb1995a` diagnostic + `81b08b3` landing counter fix (pensionsMonitored now unions signals ∪ allocations → 12; hardcoded fallback replaced with null → `—`) + stale-diagnostic-script repair (six `scripts/check-*.ts` / `list-*.ts` files corrected schema references + added explicit error logging).
+
 ### Fund fact sheet ingestion (Phase 4+)
 
 Current limitation: some pensions publish allocation **targets** in the CAFR but **actuals** only in quarterly fund fact sheets or investment performance reports. 3 of 6 pensions with allocation data are currently target-only at their latest snapshot (NYSCRF 2025-03-31, WSIB 2025-06-30, Wisconsin SWIB 2024-12-31; TRS Texas 2025-08-31 reports non-PM classes only). 25 of 74 `pension_allocations` rows have `actual_pct IS NULL` and silently contribute `$0` to the unfunded-budget total.
