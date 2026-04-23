@@ -111,6 +111,37 @@
 }
 
 @layer components {
+  /* Landing-page grid background — faint 1px dots at 40px spacing on
+     near-white. Gives the page a financial-document texture without
+     competing with content. Only applied on the landing via `.landing-surface`. */
+  .landing-surface {
+    background-color: #fafaf9;
+    background-image:
+      radial-gradient(
+        circle at 1px 1px,
+        rgba(15, 27, 61, 0.07) 1px,
+        transparent 0
+      );
+    background-size: 40px 40px;
+    background-attachment: fixed;
+  }
+
+  /* Deep navy accent (Preqin palette). Applied to primary headings and
+     CTAs. Kept as a utility so only the landing uses it; dashboard
+     chrome continues to use the app's existing blue accent. */
+  .text-navy {
+    color: #0f1b3d;
+  }
+  .bg-navy {
+    background-color: #0f1b3d;
+  }
+  .border-navy {
+    border-color: #0f1b3d;
+  }
+  .hover\:bg-navy-hi:hover {
+    background-color: #1a2a5c;
+  }
+
   .mono {
     font-family: var(--font-jetbrains), ui-monospace, SFMono-Regular, Menlo,
       Consolas, "Liberation Mono", monospace;

@@ -1,47 +1,62 @@
 import Link from "next/link";
-import { Quote } from "lucide-react";
+import { ArrowUpRight, Quote } from "lucide-react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatUSD, formatDate } from "@/lib/utils";
 import { Wordmark } from "@/components/brand/wordmark";
 import { DemoRequestButton } from "@/components/landing/demo-request-modal";
+import {
+  PRIVATE_MARKETS_CLASSES,
+  privateMarketsUnfundedUsd,
+  unfundedUsd,
+} from "@/lib/relevance/unfunded";
 
 export const dynamic = "force-dynamic";
 
 export default async function LandingPage() {
-  // Auth check uses the cookie-bound server client so the top-right link
-  // flips to "Go to dashboard" for returning users.
   const authClient = createSupabaseServerClient();
   const {
     data: { user },
   } = await authClient.auth.getUser();
 
-  // Data queries for the landing use the admin client. The numbers shown
-  // (aggregate unfunded budget, signal count, pension count, CalSTRS
-  // top-3 underweight, recent policy changes, one audit-trail example)
-  // are explicitly designed to be public-facing proof — no per-user data.
-  // Going through RLS would silently zero everything for unauth visitors.
   const db = createSupabaseAdminClient();
 
-  const [stats, calstrsUnderweight, recentPolicyChanges, auditExample] =
-    await Promise.all([
-      loadLiveStats(db),
-      loadCalstrsTop3Underweight(db),
-      loadRecentPolicyChanges(db),
-      loadAuditExample(db),
-    ]);
+  const [
+    stats,
+    calstrsUnderweight,
+    recentPolicyChanges,
+    auditExample,
+    heroSignals,
+    feedSignals,
+    pipelineCounts,
+    outreachPreview,
+  ] = await Promise.all([
+    loadLiveStats(db),
+    loadCalstrsTop3Underweight(db),
+    loadRecentPolicyChanges(db),
+    loadAuditExample(db),
+    loadRecentSignalsCompact(db, 3),
+    loadRecentSignalsCompact(db, 6),
+    loadPipelineCounts(db),
+    loadOutreachPreview(db),
+  ]);
 
   return (
-    <div className="min-h-screen bg-white text-[rgb(10,10,10)]">
+    <div className="landing-surface min-h-screen text-[rgb(10,10,10)]">
       <TopNav authenticated={!!user} />
       <main>
-        <Hero stats={stats} />
-        <ProofCards
+        <Hero stats={stats} heroSignals={heroSignals} />
+        <ProofBlocks
           calstrsRows={calstrsUnderweight}
           policyChanges={recentPolicyChanges}
+          feedSignals={feedSignals}
         />
-        <HowItWorks />
+        <HowItWorks pipeline={pipelineCounts} />
+        <LiveFromDashboard
+          calstrsRows={calstrsUnderweight}
+          outreach={outreachPreview}
+        />
         <AuditTrailProof example={auditExample} />
         <Faq />
       </main>
@@ -56,6 +71,32 @@ type LiveStats = {
   unfundedTotal: number;
   signalsCount: number;
   pensionsMonitored: number;
+};
+
+type CompactSignal = {
+  id: string;
+  plan_name: string | null;
+  gp_name: string | null;
+  asset_class: string | null;
+  summary: string;
+  commitment_amount_usd: number | null;
+  meeting_date: string | null;
+  created_at: string;
+};
+
+type OutreachPreviewRow = {
+  plan_id: string;
+  plan_name: string;
+  country: string;
+  unfunded_usd: number;
+  slug: string | null;
+};
+
+type PipelineCounts = {
+  documents: number;
+  signals: number;
+  allocations: number;
+  policyChanges: number;
 };
 
 async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
@@ -80,8 +121,6 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
       total_plan_aum_usd: number | null;
       as_of_date: string;
     }>;
-
-    // Per-plan latest snapshot, sum underweight dollars, then sum across plans.
     const byPlan = new Map<string, typeof rows>();
     for (const r of rows) {
       if (!byPlan.has(r.plan_id)) byPlan.set(r.plan_id, []);
@@ -105,9 +144,8 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
       pensionsMonitored: byPlan.size,
     };
   } catch {
-    // Fallback per Day 7.5 hard stop — use last-known stable numbers.
     return {
-      unfundedTotal: 15_000_000_000,
+      unfundedTotal: 25_900_000_000,
       signalsCount: 75,
       pensionsMonitored: 7,
     };
@@ -217,8 +255,6 @@ type AuditExample = {
 async function loadAuditExample(
   supabase: SupabaseClient,
 ): Promise<AuditExample | null> {
-  // Prefer a pension-side board-minutes signal: crisp RESOLVED quote,
-  // single fund, fits the narrative of the product.
   const { data } = await supabase
     .from("signals")
     .select(
@@ -256,122 +292,334 @@ async function loadAuditExample(
   };
 }
 
+async function loadRecentSignalsCompact(
+  supabase: SupabaseClient,
+  limit: number,
+): Promise<CompactSignal[]> {
+  const { data } = await supabase
+    .from("signals")
+    .select(
+      "id, asset_class, summary, commitment_amount_usd, created_at, plan:plans(name), gp:gps(name), document:documents(meeting_date)",
+    )
+    .eq("seed_data", false)
+    .not("validated_at", "is", null)
+    .eq("signal_type", 1)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return ((data ?? []) as unknown as Array<{
+    id: string;
+    asset_class: string | null;
+    summary: string;
+    commitment_amount_usd: number | null;
+    created_at: string;
+    plan: { name: string } | null;
+    gp: { name: string } | null;
+    document: { meeting_date: string | null } | null;
+  }>).map((r) => ({
+    id: r.id,
+    plan_name: r.plan?.name ?? null,
+    gp_name: r.gp?.name ?? null,
+    asset_class: r.asset_class,
+    summary: r.summary,
+    commitment_amount_usd: r.commitment_amount_usd,
+    meeting_date: r.document?.meeting_date ?? null,
+    created_at: r.created_at,
+  }));
+}
+
+async function loadPipelineCounts(
+  supabase: SupabaseClient,
+): Promise<PipelineCounts> {
+  const [docs, signals, allocations, policyChanges] = await Promise.all([
+    supabase
+      .from("documents")
+      .select("id", { count: "exact", head: true })
+      .eq("processing_status", "complete"),
+    supabase
+      .from("signals")
+      .select("id", { count: "exact", head: true })
+      .eq("seed_data", false)
+      .not("validated_at", "is", null),
+    supabase.from("pension_allocations").select("id", { count: "exact", head: true }),
+    supabase
+      .from("allocation_policy_changes")
+      .select("id", { count: "exact", head: true }),
+  ]);
+  return {
+    documents: docs.count ?? 0,
+    signals: signals.count ?? 0,
+    allocations: allocations.count ?? 0,
+    policyChanges: policyChanges.count ?? 0,
+  };
+}
+
+async function loadOutreachPreview(
+  supabase: SupabaseClient,
+): Promise<OutreachPreviewRow[]> {
+  const { data } = await supabase
+    .from("pension_allocations")
+    .select(
+      "plan_id, asset_class, target_pct, actual_pct, total_plan_aum_usd, as_of_date, plan:plans(id, name, country, scrape_config)",
+    )
+    .eq("preliminary", false);
+  const rows = (data ?? []) as unknown as Array<{
+    plan_id: string;
+    asset_class: string;
+    target_pct: number;
+    actual_pct: number | null;
+    total_plan_aum_usd: number | null;
+    as_of_date: string;
+    plan: {
+      id: string;
+      name: string;
+      country: string;
+      scrape_config: Record<string, unknown> | null;
+    } | null;
+  }>;
+  const byPlan = new Map<string, typeof rows>();
+  for (const r of rows) {
+    if (!byPlan.has(r.plan_id)) byPlan.set(r.plan_id, []);
+    byPlan.get(r.plan_id)!.push(r);
+  }
+  const out: OutreachPreviewRow[] = [];
+  for (const [, list] of byPlan) {
+    list.sort((a, b) => b.as_of_date.localeCompare(a.as_of_date));
+    const latestDate = list[0].as_of_date;
+    const latest = list.filter((r) => r.as_of_date === latestDate);
+    const total = privateMarketsUnfundedUsd(latest);
+    if (total <= 0 || !latest[0].plan) continue;
+    const slug =
+      typeof latest[0].plan.scrape_config === "object" &&
+      latest[0].plan.scrape_config
+        ? ((latest[0].plan.scrape_config as Record<string, unknown>).key as
+            | string
+            | undefined) ?? null
+        : null;
+    out.push({
+      plan_id: latest[0].plan.id,
+      plan_name: latest[0].plan.name,
+      country: latest[0].plan.country,
+      unfunded_usd: total,
+      slug,
+    });
+  }
+  out.sort((a, b) => b.unfunded_usd - a.unfunded_usd);
+  return out.slice(0, 5);
+}
+
 // ─── sections ──────────────────────────────────────────────────────────────
 
 function TopNav({ authenticated }: { authenticated: boolean }) {
   return (
-    <header className="w-full border-b border-neutral-200 bg-white">
+    <header className="w-full border-b border-neutral-200 bg-white/70 backdrop-blur-sm">
       <div className="mx-auto max-w-[1200px] px-6 h-16 flex items-center justify-between">
         <Wordmark size="md" />
-        {authenticated ? (
-          <Link
-            href="/signals"
-            className="text-[13px] text-neutral-700 hover:text-neutral-950 transition-colors"
+        <div className="flex items-center gap-6">
+          <a
+            href="#how"
+            className="hidden sm:inline text-[13px] text-neutral-700 hover:text-navy transition-colors"
           >
-            Go to dashboard →
-          </Link>
-        ) : (
-          <Link
-            href="/login"
-            className="text-[13px] text-neutral-700 hover:text-neutral-950 transition-colors"
+            How it works
+          </a>
+          <a
+            href="#faq"
+            className="hidden sm:inline text-[13px] text-neutral-700 hover:text-navy transition-colors"
           >
-            Sign in
-          </Link>
-        )}
+            FAQ
+          </a>
+          {authenticated ? (
+            <Link
+              href="/signals"
+              className="text-[13px] text-neutral-700 hover:text-navy transition-colors"
+            >
+              Go to dashboard →
+            </Link>
+          ) : (
+            <Link
+              href="/login"
+              className="text-[13px] text-neutral-700 hover:text-navy transition-colors"
+            >
+              Sign in
+            </Link>
+          )}
+        </div>
       </div>
     </header>
   );
 }
 
-function Hero({ stats }: { stats: LiveStats }) {
+function Hero({
+  stats,
+  heroSignals,
+}: {
+  stats: LiveStats;
+  heroSignals: CompactSignal[];
+}) {
   return (
-    <section className="mx-auto max-w-[1200px] px-6 pt-24 pb-20 sm:pt-32 sm:pb-28">
-      <div className="max-w-3xl">
-        <h1
-          className="text-[44px] sm:text-[60px] font-semibold text-neutral-950 leading-[1.02]"
-          style={{ letterSpacing: "-0.03em" }}
-        >
-          LP intelligence for private markets fundraising.
-        </h1>
-        <p className="mt-6 text-[17px] sm:text-[19px] text-neutral-600 leading-snug max-w-2xl">
-          Track allocation gaps, policy changes, and commitment signals across
-          US public pensions in real time.
-        </p>
-        <div className="mt-9 flex flex-wrap items-center gap-3">
-          <DemoRequestButton label="Request demo" />
-          <a
-            href="#how"
-            className="inline-flex items-center h-9 px-4 text-[13px] text-neutral-700 hover:text-neutral-950 rounded-lg transition-colors"
+    <section className="mx-auto max-w-[1200px] px-6 pt-16 pb-20 sm:pt-20 sm:pb-24">
+      <div className="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-10 lg:gap-16 items-start">
+        {/* LEFT */}
+        <div>
+          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-neutral-200 bg-white text-[11.5px] text-neutral-700">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            <span>Live data from {stats.pensionsMonitored} US public pensions</span>
+          </div>
+          <h1
+            className="mt-5 text-[44px] sm:text-[56px] font-bold text-navy leading-[1.02]"
+            style={{ letterSpacing: "-0.05em" }}
           >
-            See how it works ↓
-          </a>
+            LP intelligence for private markets fundraising.
+          </h1>
+          <p className="mt-5 text-[16px] sm:text-[18px] text-neutral-700 leading-snug max-w-xl">
+            Track allocation gaps, policy changes, and commitment signals
+            across US public pensions in real time.
+          </p>
+          <div className="mt-7 flex flex-wrap items-center gap-3">
+            <DemoRequestButton label="Request demo" />
+            <a
+              href="#proof"
+              className="inline-flex items-center h-9 px-4 text-[13px] text-neutral-700 hover:text-navy rounded-lg transition-colors"
+            >
+              See live data ↓
+            </a>
+          </div>
+
+          {/* Stat rail — vertical stack so it lines up alongside the right panel */}
+          <dl className="mt-10 grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 divide-y lg:divide-y divide-neutral-200 lg:max-w-xs sm:divide-y-0 lg:sm:divide-y sm:divide-x sm:divide-neutral-200 lg:sm:divide-x-0">
+            <HeroStat
+              value={formatUSD(stats.unfundedTotal)}
+              label="tracked unfunded budget"
+            />
+            <HeroStat
+              value={String(stats.signalsCount)}
+              label="commitment signals"
+            />
+            <HeroStat
+              value={String(stats.pensionsMonitored)}
+              label="pensions monitored"
+            />
+          </dl>
         </div>
 
-        {/* Live stat strip */}
-        <div className="mt-14 grid grid-cols-1 sm:grid-cols-3 gap-x-0 gap-y-4 sm:divide-x sm:divide-neutral-200 max-w-3xl">
-          <LiveStat
-            value={formatUSD(stats.unfundedTotal)}
-            label="tracked unfunded budget"
-          />
-          <LiveStat
-            value={String(stats.signalsCount)}
-            label="commitment signals"
-          />
-          <LiveStat
-            value={String(stats.pensionsMonitored)}
-            label="pensions monitored"
-          />
-        </div>
+        {/* RIGHT — live mini-dashboard preview */}
+        <HeroDashboard signals={heroSignals} />
       </div>
     </section>
   );
 }
 
-function LiveStat({ value, label }: { value: string; label: string }) {
+function HeroStat({ value, label }: { value: string; label: string }) {
   return (
-    <div className="sm:px-8 sm:first:pl-0 sm:last:pr-0">
-      <div
-        className="text-[28px] sm:text-[32px] font-semibold text-neutral-950 leading-none num tabular-nums"
+    <div className="py-4 sm:px-4 lg:px-0 first:pt-0 sm:first:pl-0 lg:sm:first:pl-0">
+      <dt
+        className="text-[26px] sm:text-[30px] font-bold text-navy leading-none num tabular-nums"
         style={{ letterSpacing: "-0.03em" }}
       >
         {value}
-      </div>
-      <div className="mt-2 text-[12.5px] text-neutral-500">{label}</div>
+      </dt>
+      <dd className="mt-2 text-[12px] text-neutral-600">{label}</dd>
     </div>
   );
 }
 
-function ProofCards({
+function HeroDashboard({ signals }: { signals: CompactSignal[] }) {
+  return (
+    <div className="rounded-[12px] border border-neutral-200 bg-white overflow-hidden">
+      <div className="px-4 py-3 border-b border-neutral-200 flex items-center justify-between gap-3 bg-neutral-50">
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          <span className="text-[11px] uppercase tracking-[0.08em] text-neutral-500">
+            Live signals
+          </span>
+        </div>
+        <span className="text-[11px] text-neutral-500">
+          Commitments · most recent
+        </span>
+      </div>
+      {signals.length === 0 ? (
+        <div className="px-4 py-6 text-[12.5px] text-neutral-500">
+          Live preview unavailable.
+        </div>
+      ) : (
+        <ul className="divide-y divide-neutral-100">
+          {signals.map((s) => {
+            const entity = s.plan_name ?? s.gp_name ?? "—";
+            const date =
+              s.meeting_date ??
+              (s.created_at ? s.created_at.slice(0, 10) : null);
+            return (
+              <li key={s.id} className="px-4 py-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[12px] font-medium text-navy truncate">
+                      {entity}
+                    </span>
+                    {s.asset_class ? (
+                      <span className="shrink-0 text-[10px] uppercase tracking-[0.06em] text-neutral-500 border border-neutral-200 rounded-[4px] px-1.5 py-0.5">
+                        {s.asset_class}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="num tabular-nums text-[13px] font-medium text-neutral-900">
+                      {s.commitment_amount_usd
+                        ? formatUSD(s.commitment_amount_usd)
+                        : "—"}
+                    </div>
+                    <div className="num tabular-nums text-[10.5px] text-neutral-500 mt-0.5">
+                      {date ?? "—"}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-1.5 text-[12px] text-neutral-600 leading-snug line-clamp-2">
+                  {s.summary}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="px-4 py-2.5 border-t border-neutral-200 bg-neutral-50 flex items-center justify-between">
+        <span className="text-[11px] text-neutral-500">
+          Shown: commitment signals (T1) from board minutes + press releases.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Section: What Allocus shows you — 3-column asymmetric grid ────────────
+
+function ProofBlocks({
   calstrsRows,
   policyChanges,
+  feedSignals,
 }: {
   calstrsRows: UnderweightRow[];
   policyChanges: PolicyChangeRow[];
+  feedSignals: CompactSignal[];
 }) {
   return (
     <section
       id="proof"
-      className="mx-auto max-w-[1200px] px-6 py-20 sm:py-28 border-t border-neutral-200"
+      className="mx-auto max-w-[1200px] px-6 py-20 sm:py-24 border-t border-neutral-200"
     >
-      <div className="mb-12 max-w-3xl">
+      <div className="mb-10 max-w-2xl">
         <div className="text-[11.5px] uppercase tracking-[0.08em] text-neutral-500">
           What Allocus shows you
         </div>
         <h2
-          className="mt-3 text-[30px] sm:text-[36px] font-semibold text-neutral-950 leading-tight"
+          className="mt-3 text-[30px] sm:text-[36px] font-bold text-navy leading-tight"
           style={{ letterSpacing: "-0.03em" }}
         >
           Live data from live disclosures.
         </h2>
-        <p className="mt-3 text-[15px] text-neutral-600 max-w-2xl">
-          These panels are populated in real time from the Allocus database.
-          Not screenshots — the numbers below update as pensions publish.
-        </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr_1.4fr] gap-4">
         <ProofCardAllocation rows={calstrsRows} />
         <ProofCardPolicy changes={policyChanges} />
+        <ProofCardFeed signals={feedSignals} />
       </div>
     </section>
   );
@@ -381,23 +629,23 @@ function ProofCardAllocation({ rows }: { rows: UnderweightRow[] }) {
   return (
     <div className="rounded-[12px] border border-neutral-200 bg-white overflow-hidden">
       <div className="px-5 py-4 border-b border-neutral-200">
-        <div className="text-[15px] font-semibold text-neutral-950">
+        <div className="text-[14px] font-semibold text-navy">
           Allocation gaps in real time
         </div>
-        <div className="mt-1 text-[13px] text-neutral-600">
+        <div className="mt-1 text-[12.5px] text-neutral-600">
           See which pensions have budget to deploy right now.
         </div>
       </div>
       <div className="px-5 py-4">
-        <div className="text-[11px] uppercase tracking-[0.08em] text-neutral-500 mb-3">
-          CalSTRS — top 3 underweight asset classes
+        <div className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500 mb-3">
+          CalSTRS — top 3 underweight
         </div>
         {rows.length === 0 ? (
-          <div className="text-[13px] text-neutral-500">
+          <div className="text-[12.5px] text-neutral-500">
             No underweight positions currently.
           </div>
         ) : (
-          <table className="w-full border-collapse text-[13px]">
+          <table className="w-full border-collapse text-[12.5px]">
             <thead>
               <tr className="text-neutral-500 border-b border-neutral-200">
                 <ProofTh>Asset</ProofTh>
@@ -419,7 +667,7 @@ function ProofCardAllocation({ rows }: { rows: UnderweightRow[] }) {
                   <td className="py-2.5 text-right num tabular-nums text-neutral-500">
                     {r.actual_pct}%
                   </td>
-                  <td className="py-2.5 text-right num tabular-nums font-medium text-emerald-700">
+                  <td className="py-2.5 text-right num tabular-nums font-semibold text-emerald-700">
                     +{formatUSD(r.unfunded_usd)}
                   </td>
                 </tr>
@@ -428,12 +676,12 @@ function ProofCardAllocation({ rows }: { rows: UnderweightRow[] }) {
           </table>
         )}
       </div>
-      <div className="px-5 py-3 border-t border-neutral-200 bg-neutral-50">
+      <div className="px-5 py-2.5 border-t border-neutral-200 bg-neutral-50">
         <Link
           href="/pensions/calstrs"
-          className="text-[12.5px] text-indigo-700 hover:text-indigo-900 transition-colors"
+          className="text-[12px] text-navy hover:underline"
         >
-          See all CalSTRS allocations →
+          All CalSTRS allocations →
         </Link>
       </div>
     </div>
@@ -444,22 +692,20 @@ function ProofCardPolicy({ changes }: { changes: PolicyChangeRow[] }) {
   return (
     <div className="rounded-[12px] border border-neutral-200 bg-white overflow-hidden">
       <div className="px-5 py-4 border-b border-neutral-200">
-        <div className="text-[15px] font-semibold text-neutral-950">
+        <div className="text-[14px] font-semibold text-navy">
           Know when targets change
         </div>
-        <div className="mt-1 text-[13px] text-neutral-600">
-          Pensions shifting allocation policy is a signal. We detect it
-          automatically.
+        <div className="mt-1 text-[12.5px] text-neutral-600">
+          We detect policy shifts automatically.
         </div>
       </div>
       <div className="px-5 py-4">
-        <div className="text-[11px] uppercase tracking-[0.08em] text-neutral-500 mb-3">
-          Most recent policy changes
+        <div className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500 mb-3">
+          Most recent
         </div>
         {changes.length === 0 ? (
-          <div className="text-[13px] text-neutral-500">
-            No policy changes detected yet — new ones surface here
-            automatically.
+          <div className="text-[12.5px] text-neutral-500">
+            No changes detected yet.
           </div>
         ) : (
           <ul className="divide-y divide-neutral-100 -mx-1">
@@ -478,24 +724,24 @@ function ProofCardPolicy({ changes }: { changes: PolicyChangeRow[] }) {
                   ? "text-rose-700"
                   : "text-neutral-500";
               return (
-                <li key={i} className="py-3 px-1 flex items-baseline gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] text-neutral-950 truncate">
-                      {c.plan_name}
-                    </div>
-                    <div className="text-[11.5px] text-neutral-500 mt-0.5">
-                      {c.asset_class} · as of {formatDate(c.as_of_date_new)}
-                    </div>
+                <li key={i} className="py-2.5 px-1">
+                  <div className="text-[12.5px] text-navy font-medium truncate">
+                    {c.plan_name}
                   </div>
-                  <div className="shrink-0 text-right">
-                    <div className="num tabular-nums text-[13px] text-neutral-900">
-                      {c.previous_target_pct}% {sign} {c.new_target_pct}%
+                  <div className="mt-0.5 flex items-baseline justify-between gap-2">
+                    <div className="text-[11px] text-neutral-500 truncate">
+                      {c.asset_class}
                     </div>
-                    <div
-                      className={`num tabular-nums text-[11.5px] mt-0.5 ${deltaTone}`}
-                    >
-                      {delta > 0 ? "+" : ""}
-                      {delta.toFixed(1)}pp
+                    <div className="text-right shrink-0">
+                      <div className="num tabular-nums text-[12px] text-neutral-900">
+                        {c.previous_target_pct}% {sign} {c.new_target_pct}%
+                      </div>
+                      <div
+                        className={`num tabular-nums text-[10.5px] ${deltaTone}`}
+                      >
+                        {delta > 0 ? "+" : ""}
+                        {delta.toFixed(1)}pp
+                      </div>
                     </div>
                   </div>
                 </li>
@@ -504,71 +750,144 @@ function ProofCardPolicy({ changes }: { changes: PolicyChangeRow[] }) {
           </ul>
         )}
       </div>
-      <div className="px-5 py-3 border-t border-neutral-200 bg-neutral-50">
+      <div className="px-5 py-2.5 border-t border-neutral-200 bg-neutral-50">
         <Link
           href="/signals?type=policy"
-          className="text-[12.5px] text-indigo-700 hover:text-indigo-900 transition-colors"
+          className="text-[12px] text-navy hover:underline"
         >
-          Full policy change history →
+          Full history →
         </Link>
       </div>
     </div>
   );
 }
 
-function HowItWorks() {
+function ProofCardFeed({ signals }: { signals: CompactSignal[] }) {
+  return (
+    <div className="rounded-[12px] border border-neutral-200 bg-white overflow-hidden">
+      <div className="px-5 py-4 border-b border-neutral-200">
+        <div className="text-[14px] font-semibold text-navy">
+          Live signal feed
+        </div>
+        <div className="mt-1 text-[12.5px] text-neutral-600">
+          Every new commitment, across every source.
+        </div>
+      </div>
+      <div className="max-h-[320px] overflow-y-auto">
+        {signals.length === 0 ? (
+          <div className="px-5 py-5 text-[12.5px] text-neutral-500">
+            Feed unavailable.
+          </div>
+        ) : (
+          <ul className="divide-y divide-neutral-100">
+            {signals.map((s) => {
+              const entity = s.plan_name ?? s.gp_name ?? "—";
+              const src = s.plan_name ? "pension" : "GP";
+              return (
+                <li key={s.id} className="px-5 py-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[12px] font-medium text-navy truncate">
+                        {entity}
+                      </span>
+                      <span className="shrink-0 text-[9.5px] uppercase tracking-[0.08em] text-neutral-500">
+                        {src}
+                      </span>
+                    </div>
+                    <div className="shrink-0 num tabular-nums text-[12px] font-medium text-neutral-900">
+                      {s.commitment_amount_usd
+                        ? formatUSD(s.commitment_amount_usd)
+                        : "—"}
+                    </div>
+                  </div>
+                  <div className="mt-1 text-[11.5px] text-neutral-600 leading-snug line-clamp-2">
+                    {s.summary}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+      <div className="px-5 py-2.5 border-t border-neutral-200 bg-neutral-50">
+        <span className="text-[11px] text-neutral-500">
+          Updated continuously as new disclosures publish.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Section: How it works ──────────────────────────────────────────────────
+
+function HowItWorks({ pipeline }: { pipeline: PipelineCounts }) {
   const steps = [
     {
       n: "01",
       title: "Ingest",
       body: "We monitor every public disclosure from US pension funds and major GPs — board minutes, monthly transaction reports, annual CAFRs, press releases.",
+      chip: `${pipeline.documents.toLocaleString("en-US")} documents processed`,
     },
     {
       n: "02",
       title: "Extract",
       body: "Claude reads every document, extracts commitment signals, allocation targets, and policy changes. Every data point source-verified to the original disclosure.",
+      chip: `${pipeline.signals} signals + ${pipeline.allocations} allocations extracted`,
     },
     {
       n: "03",
       title: "Surface",
       body: "Your dashboard filters to your ICP. See which pensions have unfunded budget matched to your fund's size and strategy. One-click audit trail on every number.",
+      chip: `${pipeline.policyChanges} policy changes detected automatically`,
     },
   ];
   return (
     <section
       id="how"
-      className="mx-auto max-w-[1200px] px-6 py-20 sm:py-28 border-t border-neutral-200"
+      className="mx-auto max-w-[1200px] px-6 py-20 sm:py-24 border-t border-neutral-200"
     >
-      <div className="mb-14 max-w-3xl">
+      <div className="mb-12 max-w-2xl">
         <div className="text-[11.5px] uppercase tracking-[0.08em] text-neutral-500">
           How it works
         </div>
         <h2
-          className="mt-3 text-[30px] sm:text-[36px] font-semibold text-neutral-950 leading-tight"
+          className="mt-3 text-[30px] sm:text-[36px] font-bold text-navy leading-tight"
           style={{ letterSpacing: "-0.03em" }}
         >
           From raw disclosure to targeted outreach list.
         </h2>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-x-12 gap-y-10">
-        {steps.map((s) => (
-          <div key={s.n}>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-0 border-t border-neutral-200">
+        {steps.map((s, i) => (
+          <div
+            key={s.n}
+            className={
+              "pt-8 pb-6 md:pr-6 " +
+              (i < steps.length - 1
+                ? "md:border-r border-neutral-200 md:pr-8"
+                : "")
+            }
+          >
             <div
-              className="text-[36px] font-semibold text-neutral-300 leading-none num tabular-nums"
-              style={{ letterSpacing: "-0.04em" }}
+              className="text-[28px] font-bold text-navy leading-none num tabular-nums"
+              style={{ letterSpacing: "-0.02em" }}
             >
               {s.n}
             </div>
             <div
-              className="mt-4 text-[18px] font-semibold text-neutral-950"
+              className="mt-5 text-[18px] font-semibold text-navy"
               style={{ letterSpacing: "-0.02em" }}
             >
               {s.title}
             </div>
-            <p className="mt-2.5 text-[14px] text-neutral-600 leading-relaxed">
+            <p className="mt-2.5 text-[13.5px] text-neutral-700 leading-relaxed max-w-sm">
               {s.body}
             </p>
+            <div className="mt-4 inline-flex items-center gap-1.5 px-2 py-1 rounded-[6px] border border-neutral-200 bg-white num tabular-nums text-[11.5px] text-neutral-800">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-navy" />
+              {s.chip}
+            </div>
           </div>
         ))}
       </div>
@@ -576,88 +895,272 @@ function HowItWorks() {
   );
 }
 
+// ─── NEW: Live from the dashboard ──────────────────────────────────────────
+
+function LiveFromDashboard({
+  calstrsRows,
+  outreach,
+}: {
+  calstrsRows: UnderweightRow[];
+  outreach: OutreachPreviewRow[];
+}) {
+  // Reconstruct a CalSTRS-like hero: headline unfunded, AUM-ish, top 3 chips.
+  const calstrsUnfundedTotal = calstrsRows.reduce(
+    (acc, r) => acc + r.unfunded_usd,
+    0,
+  );
+  return (
+    <section className="mx-auto max-w-[1200px] px-6 py-20 sm:py-24 border-t border-neutral-200">
+      <div className="mb-10 max-w-2xl">
+        <div className="text-[11.5px] uppercase tracking-[0.08em] text-neutral-500">
+          What this looks like today
+        </div>
+        <h2
+          className="mt-3 text-[30px] sm:text-[36px] font-bold text-navy leading-tight"
+          style={{ letterSpacing: "-0.03em" }}
+        >
+          Live from the dashboard.
+        </h2>
+        <p className="mt-3 text-[14px] text-neutral-700">
+          Every pension, every signal, every allocation gap — source-verified
+          and filtered to your firm&apos;s ICP.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* LEFT: CalSTRS hero-style ribbon */}
+        <div className="rounded-[12px] border border-neutral-200 bg-white overflow-hidden">
+          <div className="px-5 py-3 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between">
+            <span className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500">
+              /pensions/calstrs
+            </span>
+            <ArrowUpRight className="h-3.5 w-3.5 text-neutral-400" />
+          </div>
+          <div className="px-5 py-5">
+            <div className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500">
+              Unfunded private-markets budget
+            </div>
+            <div
+              className="mt-1 num tabular-nums text-[36px] sm:text-[40px] font-bold text-navy leading-none"
+              style={{ letterSpacing: "-0.03em" }}
+            >
+              {formatUSD(calstrsUnfundedTotal)}
+            </div>
+            <div className="mt-2 text-[11.5px] text-neutral-500">
+              CalSTRS · fiscal year end 2025-06-30 · based on latest CAFR
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              {calstrsRows.map((r) => (
+                <div
+                  key={r.asset_class}
+                  className="rounded-[6px] border border-neutral-200 px-2.5 py-1.5 min-w-[96px] bg-white"
+                >
+                  <div className="text-[10px] uppercase tracking-[0.06em] text-neutral-500">
+                    {r.asset_class}
+                  </div>
+                  <div className="num tabular-nums text-[13px] font-semibold text-neutral-900 leading-tight">
+                    {formatUSD(r.unfunded_usd)}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 border-t border-neutral-200 pt-4">
+              <div className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500 mb-2">
+                Gap detail
+              </div>
+              <table className="w-full border-collapse text-[12.5px]">
+                <tbody>
+                  {calstrsRows.map((r) => (
+                    <tr
+                      key={r.asset_class}
+                      className="border-b border-neutral-100 last:border-b-0"
+                    >
+                      <td className="py-2 text-neutral-950">{r.asset_class}</td>
+                      <td className="py-2 text-right num tabular-nums text-neutral-500">
+                        {r.target_pct}% → {r.actual_pct}%
+                      </td>
+                      <td className="py-2 text-right num tabular-nums font-semibold text-emerald-700">
+                        +{formatUSD(r.unfunded_usd)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT: Outreach dashboard preview */}
+        <div className="rounded-[12px] border border-neutral-200 bg-white overflow-hidden">
+          <div className="px-5 py-3 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between">
+            <span className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500">
+              /outreach
+            </span>
+            <ArrowUpRight className="h-3.5 w-3.5 text-neutral-400" />
+          </div>
+          <div className="px-5 py-5">
+            <div className="flex items-baseline justify-between gap-3">
+              <div>
+                <div className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500">
+                  Filter
+                </div>
+                <div className="mt-1 text-[13px] text-neutral-950">
+                  Unfunded PE/RE budget{" "}
+                  <span className="num tabular-nums text-navy">≥ $1B</span>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500">
+                  Matches
+                </div>
+                <div className="num tabular-nums text-[15px] font-semibold text-navy">
+                  {outreach.length}
+                </div>
+              </div>
+            </div>
+
+            {outreach.length === 0 ? (
+              <div className="mt-5 text-[12.5px] text-neutral-500">
+                No plans match this filter yet.
+              </div>
+            ) : (
+              <table className="mt-5 w-full border-collapse text-[12.5px]">
+                <thead>
+                  <tr className="text-neutral-500 border-b border-neutral-200">
+                    <ProofTh>Plan</ProofTh>
+                    <ProofTh className="text-right">Country</ProofTh>
+                    <ProofTh className="text-right">Unfunded</ProofTh>
+                  </tr>
+                </thead>
+                <tbody>
+                  {outreach.map((p) => (
+                    <tr
+                      key={p.plan_id}
+                      className="border-b border-neutral-100 last:border-b-0"
+                    >
+                      <td className="py-2.5 text-neutral-950 truncate max-w-[200px]">
+                        {p.plan_name}
+                      </td>
+                      <td className="py-2.5 text-right num tabular-nums text-neutral-500">
+                        {p.country}
+                      </td>
+                      <td className="py-2.5 text-right num tabular-nums font-semibold text-neutral-900">
+                        {formatUSD(p.unfunded_usd)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className="px-5 py-2.5 border-t border-neutral-200 bg-neutral-50">
+            <span className="text-[11px] text-neutral-500">
+              Sortable · exportable · filterable by asset class, size, recency.
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Audit trail proof — 2 columns ─────────────────────────────────────────
+
 function AuditTrailProof({ example }: { example: AuditExample | null }) {
   return (
-    <section className="mx-auto max-w-[1200px] px-6 py-20 sm:py-28 border-t border-neutral-200">
-      <div className="mb-10 max-w-3xl">
+    <section className="mx-auto max-w-[1200px] px-6 py-20 sm:py-24 border-t border-neutral-200">
+      <div className="mb-10 max-w-2xl">
         <div className="text-[11.5px] uppercase tracking-[0.08em] text-neutral-500">
           Credibility
         </div>
         <h2
-          className="mt-3 text-[30px] sm:text-[36px] font-semibold text-neutral-950 leading-tight"
+          className="mt-3 text-[30px] sm:text-[36px] font-bold text-navy leading-tight"
           style={{ letterSpacing: "-0.03em" }}
         >
           Every number is traceable.
         </h2>
+        <p className="mt-3 text-[14px] text-neutral-700">
+          Click any figure in Allocus to see the verbatim language from the
+          original disclosure — no inference, no paraphrase.
+        </p>
       </div>
 
       {example ? (
-        <div className="rounded-[12px] border border-neutral-200 bg-white overflow-hidden max-w-3xl">
-          <div className="px-6 py-5 border-b border-neutral-200">
-            <div className="text-[11px] uppercase tracking-[0.08em] text-neutral-500 mb-2">
-              Signal
-            </div>
-            <div className="text-[15px] text-neutral-950 leading-snug">
-              {example.summary}
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-neutral-500">
-              {example.asset_class ? <span>{example.asset_class}</span> : null}
-              {example.commitment_amount_usd ? (
-                <span className="num tabular-nums">
-                  {formatUSD(example.commitment_amount_usd)}
-                </span>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="px-6 py-5 bg-neutral-50 border-b border-neutral-200">
-            <div className="text-[11px] uppercase tracking-[0.08em] text-neutral-500 mb-2">
-              Source quote
-              {example.source_page ? ` · page ${example.source_page}` : ""}
-            </div>
-            <div className="flex items-start gap-3">
-              <Quote
-                className="h-4 w-4 mt-0.5 text-neutral-400 shrink-0"
-                strokeWidth={1.5}
-              />
-              <blockquote className="text-[14px] text-neutral-800 leading-relaxed italic">
-                {example.source_quote}
-              </blockquote>
-            </div>
-          </div>
-
-          <div className="px-6 py-4">
-            <div className="text-[12px] text-neutral-500">
-              From:{" "}
-              <span className="text-neutral-800">
-                {example.plan_name ?? "—"}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* LEFT: the record */}
+          <div className="rounded-[12px] border border-neutral-200 bg-white overflow-hidden">
+            <div className="px-5 py-3 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between">
+              <span className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500">
+                Signal record
               </span>
-              {" · "}
-              <span className="text-neutral-800">
-                {prettyDocType(example.doc_type)}
+              <span className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500">
+                Extracted
               </span>
-              {example.meeting_date ? (
-                <>
-                  {" · "}
-                  <span className="num tabular-nums text-neutral-800">
+            </div>
+            <div className="px-5 py-4">
+              <div className="text-[14px] text-neutral-950 leading-snug">
+                {example.summary}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-neutral-500">
+                {example.asset_class ? <span>{example.asset_class}</span> : null}
+                {example.commitment_amount_usd ? (
+                  <span className="num tabular-nums text-navy font-medium">
+                    {formatUSD(example.commitment_amount_usd)}
+                  </span>
+                ) : null}
+                {example.plan_name ? <span>{example.plan_name}</span> : null}
+                {example.meeting_date ? (
+                  <span className="num tabular-nums">
                     {formatDate(example.meeting_date)}
                   </span>
-                </>
-              ) : null}
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT: the source */}
+          <div className="rounded-[12px] border border-neutral-200 bg-white overflow-hidden">
+            <div className="px-5 py-3 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between">
+              <span className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500">
+                Source document
+              </span>
+              <span className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500">
+                {example.source_page ? `p. ${example.source_page}` : "source"}
+              </span>
+            </div>
+            <div className="px-5 py-4">
+              <div className="flex items-start gap-3">
+                <Quote
+                  className="h-4 w-4 mt-0.5 text-neutral-400 shrink-0"
+                  strokeWidth={1.5}
+                />
+                <blockquote className="text-[13.5px] text-neutral-800 leading-relaxed italic">
+                  {example.source_quote}
+                </blockquote>
+              </div>
+              <div className="mt-4 text-[11.5px] text-neutral-500">
+                {prettyDocType(example.doc_type)}
+                {example.plan_name ? ` · ${example.plan_name}` : ""}
+                {example.meeting_date ? ` · ${formatDate(example.meeting_date)}` : ""}
+              </div>
+            </div>
+            <div className="px-5 py-2.5 border-t border-neutral-200 bg-neutral-50 flex items-center justify-between">
+              <span className="text-[11px] text-neutral-500">
+                Every row links to the original PDF with one click.
+              </span>
+              <span className="text-[11px] text-navy font-medium">
+                Inspect →
+              </span>
             </div>
           </div>
         </div>
       ) : (
-        <div className="rounded-[12px] border border-neutral-200 bg-white p-6 text-[13px] text-neutral-500 max-w-3xl">
+        <div className="rounded-[12px] border border-neutral-200 bg-white p-6 text-[13px] text-neutral-500">
           Example unavailable.
         </div>
       )}
-
-      <p className="mt-6 max-w-3xl text-[14px] text-neutral-600 leading-relaxed">
-        Click any number anywhere in Allocus to see the original source
-        document. No extrapolation, no inference — every data point verified to
-        the page.
-      </p>
     </section>
   );
 }
@@ -681,6 +1184,8 @@ function prettyDocType(t: string): string {
   }
 }
 
+// ─── FAQ — 2 columns ───────────────────────────────────────────────────────
+
 function Faq() {
   const items: { q: string; a: string }[] = [
     {
@@ -689,7 +1194,7 @@ function Faq() {
     },
     {
       q: "Where does the data come from?",
-      a: "Every signal is sourced from public disclosures: SEC filings, state comptroller reports, pension board minutes, GP press releases, and Comprehensive Annual Financial Reports (CAFRs). Every number in Allocus links back to the original source document with a page citation.",
+      a: "Every signal is sourced from public disclosures: state comptroller reports, pension board minutes, GP press releases, and Comprehensive Annual Financial Reports (CAFRs). Every number in Allocus links back to the original source document with a page citation.",
     },
     {
       q: "How fresh is the data?",
@@ -708,73 +1213,135 @@ function Faq() {
       a: "Yes. Request one via the button at the top. Current beta is closed to ~5 design partners. Access is manual for now.",
     },
   ];
+  const leftCol = items.slice(0, 3);
+  const rightCol = items.slice(3);
 
   return (
     <section
       id="faq"
-      className="mx-auto max-w-[1200px] px-6 py-20 sm:py-28 border-t border-neutral-200"
+      className="mx-auto max-w-[1200px] px-6 py-20 sm:py-24 border-t border-neutral-200"
     >
-      <div className="mb-10 max-w-3xl">
+      <div className="mb-10 max-w-2xl">
         <div className="text-[11.5px] uppercase tracking-[0.08em] text-neutral-500">
           FAQ
         </div>
         <h2
-          className="mt-3 text-[30px] sm:text-[36px] font-semibold text-neutral-950 leading-tight"
+          className="mt-3 text-[30px] sm:text-[36px] font-bold text-navy leading-tight"
           style={{ letterSpacing: "-0.03em" }}
         >
           Good questions people ask.
         </h2>
       </div>
 
-      <div className="max-w-3xl rounded-[12px] border border-neutral-200 bg-white overflow-hidden divide-y divide-neutral-200">
-        {items.map((it) => (
-          <details key={it.q} className="group">
-            <summary className="cursor-pointer list-none px-6 py-5 flex items-center justify-between gap-4 hover:bg-neutral-50 transition-colors">
-              <span className="text-[15px] font-medium text-neutral-950">
-                {it.q}
-              </span>
-              <span
-                aria-hidden
-                className="shrink-0 text-[14px] text-neutral-400 transition-transform group-open:rotate-45"
-              >
-                +
-              </span>
-            </summary>
-            <div className="px-6 pb-5 text-[14px] text-neutral-600 leading-relaxed">
-              {it.a}
-            </div>
-          </details>
-        ))}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <FaqColumn items={leftCol} />
+        <FaqColumn items={rightCol} />
       </div>
     </section>
   );
 }
 
+function FaqColumn({ items }: { items: { q: string; a: string }[] }) {
+  return (
+    <div className="rounded-[12px] border border-neutral-200 bg-white overflow-hidden divide-y divide-neutral-200">
+      {items.map((it) => (
+        <details key={it.q} className="group">
+          <summary className="cursor-pointer list-none px-5 py-4 flex items-center justify-between gap-4 hover:bg-neutral-50 transition-colors">
+            <span className="text-[14px] font-medium text-navy">{it.q}</span>
+            <span
+              aria-hidden
+              className="shrink-0 text-[14px] text-neutral-400 transition-transform group-open:rotate-45"
+            >
+              +
+            </span>
+          </summary>
+          <div className="px-5 pb-4 text-[13.5px] text-neutral-700 leading-relaxed">
+            {it.a}
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+// ─── Footer — 3 columns ────────────────────────────────────────────────────
+
 function Footer() {
   return (
     <footer className="border-t border-neutral-200 bg-white">
-      <div className="mx-auto max-w-[1200px] px-6 py-8 flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <Wordmark size="sm" />
-          <span className="text-[12px] text-neutral-500">
-            © {new Date().getFullYear()} Allocus · Closed beta
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <DemoRequestButton size="sm" variant="outline" label="Request demo" />
-          <a
-            href="mailto:vitek.vrana@bloorcapital.com?subject=Allocus%20demo"
-            className="text-[12.5px] text-neutral-600 hover:text-neutral-950 transition-colors"
-          >
-            vitek.vrana@bloorcapital.com
-          </a>
+      <div className="mx-auto max-w-[1200px] px-6 py-10">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+          <div>
+            <Wordmark size="sm" />
+            <div className="mt-2.5 text-[12.5px] text-neutral-600 leading-snug max-w-[220px]">
+              LP intelligence for private markets.
+            </div>
+            <div className="mt-3 text-[11.5px] text-neutral-500">
+              © {new Date().getFullYear()} Allocus · Closed beta
+            </div>
+          </div>
+          <div>
+            <div className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500 mb-3">
+              Product
+            </div>
+            <ul className="space-y-2 text-[12.5px]">
+              <li>
+                <FooterLink href="#proof">What it shows</FooterLink>
+              </li>
+              <li>
+                <FooterLink href="#how">How it works</FooterLink>
+              </li>
+              <li>
+                <FooterLink href="#faq">FAQ</FooterLink>
+              </li>
+              <li>
+                <FooterLink href="#">Request demo</FooterLink>
+              </li>
+            </ul>
+          </div>
+          <div>
+            <div className="text-[10.5px] uppercase tracking-[0.08em] text-neutral-500 mb-3">
+              Contact
+            </div>
+            <ul className="space-y-2 text-[12.5px]">
+              <li>
+                <a
+                  href="mailto:vitek.vrana@bloorcapital.com?subject=Allocus%20demo"
+                  className="text-neutral-700 hover:text-navy transition-colors"
+                >
+                  vitek.vrana@bloorcapital.com
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/vranavit/lp-signal"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-neutral-700 hover:text-navy transition-colors"
+                >
+                  GitHub
+                </a>
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
     </footer>
   );
 }
 
-// ProofCard table-header cell — keeps all four columns rhythmic.
+function FooterLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      className="text-neutral-700 hover:text-navy transition-colors"
+    >
+      {children}
+    </a>
+  );
+}
+
+// ProofCard table-header cell — keeps columns rhythmic.
 function ProofTh({
   children,
   className = "",
@@ -784,7 +1351,7 @@ function ProofTh({
 }) {
   return (
     <th
-      className={`text-left font-normal text-[11px] uppercase tracking-[0.06em] text-neutral-500 py-2 ${className}`}
+      className={`text-left font-normal text-[10.5px] uppercase tracking-[0.06em] text-neutral-500 py-2 ${className}`}
     >
       {children}
     </th>
