@@ -1,21 +1,23 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    {
-      "path": "/api/cron/scrape",
-      "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/cron/classify",
-      "schedule": "15 6 * * *"
-    },
-    {
-      "path": "/api/cron/preliminary-alert",
-      "schedule": "0 14 * * *"
-    },
-    {
-      "path": "/api/cron/policy-change-alert",
-      "schedule": "0 15 * * *"
-    }
+    { "path": "/api/cron/classify", "schedule": "15 6 * * *" },
+    { "path": "/api/cron/preliminary-alert", "schedule": "0 14 * * *" },
+    { "path": "/api/cron/policy-change-alert", "schedule": "0 15 * * *" },
+
+    { "path": "/api/cron/scrape-blackstone", "schedule": "0 14 * * *" },
+    { "path": "/api/cron/scrape-brookfield", "schedule": "15 14 * * *" },
+
+    { "path": "/api/cron/scrape-calpers", "schedule": "0 16 * * *" },
+    { "path": "/api/cron/scrape-calstrs", "schedule": "15 16 * * *" },
+    { "path": "/api/cron/scrape-nyscrf", "schedule": "30 16 * * *" },
+    { "path": "/api/cron/scrape-nystrs", "schedule": "45 16 * * *" },
+    { "path": "/api/cron/scrape-psers", "schedule": "0 17 * * *" },
+    { "path": "/api/cron/scrape-michigan", "schedule": "15 17 * * *" },
+    { "path": "/api/cron/scrape-wsib", "schedule": "30 17 * * *" },
+
+    { "path": "/api/cron/scrape-cafr", "schedule": "0 18 * * 1" },
+
+    { "path": "/api/cron/scraper-health-check", "schedule": "0 19 * * *" }
   ]
 }
