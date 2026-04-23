@@ -111,19 +111,33 @@
 }
 
 @layer components {
-  /* Landing-page background — very faint 1px horizontal lines at 120px
-     spacing on near-white. Financial-document feel, quieter than dots.
-     Fixed so it stays put as the page scrolls. Individual sections
-     override with opaque bg-white / bg-neutral-50 to create rhythm. */
-  .landing-surface {
+  /* Hero background — off-white base with a faint navy grid at 3%. Gives
+     the hero a subtle financial-document texture behind the oversized
+     dollar number. Scoped to the hero section only via .hero-surface so
+     other sections keep their opaque white / neutral-100 backgrounds. */
+  .hero-surface {
     background-color: #fafaf9;
+    background-image:
+      linear-gradient(to right, rgba(15, 27, 61, 0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(15, 27, 61, 0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+
+  /* How-it-works backdrop — white with thin horizontal rules every 120px.
+     Makes the section feel like ruled report paper without competing with
+     the content. */
+  .how-surface::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
     background-image: linear-gradient(
       to bottom,
-      rgba(15, 27, 61, 0.04) 1px,
+      rgba(15, 27, 61, 0.06) 1px,
       transparent 1px
     );
     background-size: 100% 120px;
-    background-attachment: fixed;
+    opacity: 0.6;
   }
 
   /* Deep navy accent (Preqin palette). Applied to primary headings and
