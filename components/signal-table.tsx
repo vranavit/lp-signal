@@ -2,7 +2,10 @@
 
 import { Badge } from "@/components/ui/badge";
 import { AuditTrailTrigger } from "@/components/audit-trail-modal";
-import { daysAgo, formatPriorityScore, formatUSD } from "@/lib/utils";
+import { formatPriorityScore, formatUSD } from "@/lib/utils";
+import { ConfidenceBadge } from "@/components/accuracy/confidence-badge";
+import { TimeAgo } from "@/components/accuracy/time-ago";
+import { StaleIndicator } from "@/components/accuracy/stale-indicator";
 import type { SignalWithDoc } from "@/components/signals-workspace";
 
 function typeLabel(t: 1 | 2 | 3) {
@@ -91,11 +94,12 @@ export function SignalTable({
               <Th className="w-[84px]">Score</Th>
               <Th className="w-[72px]">Fit</Th>
               <Th className="w-[132px]">Type</Th>
+              <Th className="w-[108px]">Accuracy</Th>
               <Th className="w-[72px]">Asset</Th>
               <Th className="w-[180px]">Plan</Th>
               <Th>Summary</Th>
               <Th className="text-right w-[104px]">Amount</Th>
-              <Th className="text-right w-[56px]">Age</Th>
+              <Th className="text-right w-[72px]">Age</Th>
               <Th className="w-[32px]"> </Th>
             </tr>
           </thead>
@@ -137,6 +141,13 @@ export function SignalTable({
                     </Badge>
                   </td>
                   <td className="px-4 py-0 align-middle">
+                    <ConfidenceBadge
+                      confidence={r.confidence}
+                      priority={r.priority_score}
+                      preliminary={r.preliminary}
+                    />
+                  </td>
+                  <td className="px-4 py-0 align-middle">
                     <span className="text-[12.5px] text-ink-muted">
                       {r.asset_class ?? "—"}
                     </span>
@@ -154,15 +165,6 @@ export function SignalTable({
                       <span className="text-[13px] text-ink truncate">
                         {r.summary}
                       </span>
-                      {r.preliminary ? (
-                        <span className="shrink-0 inline-flex items-center gap-1 text-[10.5px] text-ink-faint">
-                          <span
-                            aria-hidden
-                            className="inline-block h-1.5 w-1.5 rounded-full bg-ink-dim"
-                          />
-                          preliminary
-                        </span>
-                      ) : null}
                       {r.seed_data ? (
                         <span className="shrink-0">
                           <Badge variant="seed">Seed</Badge>
@@ -176,8 +178,13 @@ export function SignalTable({
                     </span>
                   </td>
                   <td className="px-4 py-0 align-middle text-right">
-                    <span className="num tabular-nums text-[11.5px] text-ink-muted">
-                      {daysAgo(r.created_at)}
+                    <span className="inline-flex items-center gap-1 justify-end">
+                      <TimeAgo date={r.created_at} />
+                      <StaleIndicator
+                        date={r.created_at}
+                        cutoffDays={30}
+                        kind="signal"
+                      />
                     </span>
                   </td>
                   <td className="px-2 py-0 align-middle text-right">

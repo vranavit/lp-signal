@@ -4,6 +4,11 @@ import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatUSD, formatDate } from "@/lib/utils";
 import { AuditTrailTrigger } from "@/components/audit-trail-modal";
+import { ConfidenceBadge } from "@/components/accuracy/confidence-badge";
+import { StaleIndicator } from "@/components/accuracy/stale-indicator";
+import { TimeAgo } from "@/components/accuracy/time-ago";
+import { Extrapolated } from "@/components/accuracy/extrapolated";
+import { PensionHeroUnfunded } from "@/components/accuracy/pension-hero-unfunded";
 import {
   privateMarketsUnfundedUsd,
   PRIVATE_MARKETS_CLASSES,
@@ -118,6 +123,8 @@ export default async function PensionProfilePage({
     id: string;
     document_id: string | null;
     signal_type: 1 | 2 | 3;
+    confidence: number;
+    priority_score: number;
     asset_class: string | null;
     summary: string;
     fields: Record<string, unknown>;
@@ -168,11 +175,22 @@ export default async function PensionProfilePage({
               <div className="text-[10.5px] text-ink-faint uppercase tracking-wide">
                 Unfunded private-markets budget
               </div>
-              <div className="num tabular-nums text-[32px] font-semibold text-ink leading-none mt-1">
-                {formatUSD(headlineUnfunded)}
+              <div className="mt-1">
+                <PensionHeroUnfunded
+                  planName={plan.name}
+                  total={headlineUnfunded}
+                  perClass={perClassUnfunded}
+                  asOfDate={latestAsOf}
+                  aumUsd={totalAum ?? plan.aum_usd}
+                />
               </div>
-              <div className="text-[11px] text-ink-faint mt-1">
-                as of {latestAsOf ? formatDate(latestAsOf) : "—"}
+              <div className="text-[11px] text-ink-faint mt-1 flex items-center justify-end gap-1">
+                <span>as of {latestAsOf ? formatDate(latestAsOf) : "—"}</span>
+                <StaleIndicator
+                  date={latestAsOf}
+                  cutoffDays={90}
+                  kind="allocation"
+                />
               </div>
             </div>
           ) : null}
@@ -285,8 +303,9 @@ export default async function PensionProfilePage({
             <table className="w-full border-collapse text-[13px]">
               <thead>
                 <tr className="border-b border-line text-ink-faint">
-                  <Th className="w-[100px]">Date</Th>
+                  <Th className="w-[110px]">Date</Th>
                   <Th className="w-[56px]">Type</Th>
+                  <Th className="w-[108px]">Accuracy</Th>
                   <Th className="w-[60px]">Asset</Th>
                   <Th>Summary</Th>
                   <Th className="text-right w-[110px]">Amount</Th>
@@ -306,11 +325,30 @@ export default async function PensionProfilePage({
                       key={s.id}
                       className="h-10 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02] hover:bg-bg-hover transition-colors duration-150"
                     >
-                      <td className="px-3 align-middle num tabular-nums text-[11.5px] text-ink-muted">
-                        {formatDate(s.document?.meeting_date ?? s.created_at)}
+                      <td className="px-3 align-middle">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="num tabular-nums text-[11.5px] text-ink-muted">
+                            {formatDate(
+                              s.document?.meeting_date ?? s.created_at,
+                            )}
+                          </span>
+                          <StaleIndicator
+                            date={s.document?.meeting_date ?? s.created_at}
+                            cutoffDays={30}
+                            kind="signal"
+                          />
+                        </span>
                       </td>
                       <td className="px-3 align-middle text-[11px] text-ink-muted">
                         {tag}
+                      </td>
+                      <td className="px-3 align-middle">
+                        <ConfidenceBadge
+                          confidence={s.confidence}
+                          priority={s.priority_score}
+                          preliminary={s.preliminary}
+                          compact
+                        />
                       </td>
                       <td className="px-3 align-middle text-[12px] text-ink-muted">
                         {s.asset_class ?? "—"}
@@ -458,6 +496,7 @@ function AllocationTable({
         <thead>
           <tr className="border-b border-line text-ink-faint">
             <Th>Asset Class</Th>
+            <Th className="w-[108px]">Accuracy</Th>
             <Th className="text-right w-[120px]">Target %</Th>
             <Th className="text-right w-[140px]">Policy Range</Th>
             <Th className="text-right w-[100px]">Actual %</Th>
@@ -489,12 +528,14 @@ function AllocationTable({
                 title={r.source_quote ?? undefined}
               >
                 <td className="px-4 py-0 align-middle text-ink">
-                  <div className="flex items-center gap-2">
-                    <span>{r.asset_class}</span>
-                    {r.preliminary ? (
-                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-ink-dim" />
-                    ) : null}
-                  </div>
+                  <span>{r.asset_class}</span>
+                </td>
+                <td className="px-4 py-0 align-middle">
+                  <ConfidenceBadge
+                    confidence={r.confidence}
+                    priority={100}
+                    preliminary={r.preliminary}
+                  />
                 </td>
                 <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink">
                   {fmtPct(r.target_pct)}
@@ -509,38 +550,42 @@ function AllocationTable({
                 </td>
                 <td className="px-4 py-0 align-middle text-right">
                   {gapPct != null ? (
-                    <span
-                      className={
-                        "num tabular-nums font-medium " +
-                        (tone === "positive"
-                          ? "text-green-700 dark:text-green-400"
-                          : tone === "negative"
-                          ? "text-red-700 dark:text-red-400"
-                          : "text-ink-muted")
-                      }
-                    >
-                      {gapPct > 0 ? "+" : ""}
-                      {fmtPct(gapPct)}
-                    </span>
+                    <Extrapolated method="target% − actual%">
+                      <span
+                        className={
+                          "num tabular-nums font-medium " +
+                          (tone === "positive"
+                            ? "text-green-700 dark:text-green-400"
+                            : tone === "negative"
+                            ? "text-red-700 dark:text-red-400"
+                            : "text-ink-muted")
+                        }
+                      >
+                        {gapPct > 0 ? "+" : ""}
+                        {fmtPct(gapPct)}
+                      </span>
+                    </Extrapolated>
                   ) : (
                     <span className="text-ink-faint">—</span>
                   )}
                 </td>
                 <td className="px-4 py-0 align-middle text-right">
                   {gapUsd != null ? (
-                    <span
-                      className={
-                        "num tabular-nums " +
-                        (gapUsd > 0
-                          ? "text-green-700 dark:text-green-400"
-                          : gapUsd < 0
-                          ? "text-red-700 dark:text-red-400"
-                          : "text-ink-muted")
-                      }
-                    >
-                      {gapUsd > 0 ? "+" : gapUsd < 0 ? "−" : ""}
-                      {formatUSD(Math.abs(gapUsd))}
-                    </span>
+                    <Extrapolated method="gap(pp) ÷ 100 × plan AUM">
+                      <span
+                        className={
+                          "num tabular-nums " +
+                          (gapUsd > 0
+                            ? "text-green-700 dark:text-green-400"
+                            : gapUsd < 0
+                            ? "text-red-700 dark:text-red-400"
+                            : "text-ink-muted")
+                        }
+                      >
+                        {gapUsd > 0 ? "+" : gapUsd < 0 ? "−" : ""}
+                        {formatUSD(Math.abs(gapUsd))}
+                      </span>
+                    </Extrapolated>
                   ) : (
                     <span className="text-ink-faint">—</span>
                   )}

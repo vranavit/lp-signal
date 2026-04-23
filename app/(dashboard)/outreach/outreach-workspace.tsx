@@ -5,7 +5,10 @@ import { useMemo } from "react";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { daysAgo, formatUSD } from "@/lib/utils";
+import { formatUSD } from "@/lib/utils";
+import { ConfidenceBadge } from "@/components/accuracy/confidence-badge";
+import { TimeAgo } from "@/components/accuracy/time-ago";
+import { StaleIndicator } from "@/components/accuracy/stale-indicator";
 import { CombinationFilter } from "@/components/filters/combination-filter";
 import { useUrlFilterState } from "@/components/filters/use-url-filter-state";
 import { tierFor } from "@/components/filters/filter-state";
@@ -345,6 +348,7 @@ export function OutreachWorkspace({
                   <Th>Plan</Th>
                   <Th>Asset</Th>
                   <Th>Dir</Th>
+                  <Th>Accuracy</Th>
                   <Th className="text-right">Amount</Th>
                   <Th>GP → Fund</Th>
                   <Th>Summary</Th>
@@ -362,8 +366,13 @@ export function OutreachWorkspace({
                       className="h-10 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02] hover:bg-bg-hover transition-colors duration-150"
                     >
                       <td className="px-3 align-middle">
-                        <span className="num tabular-nums text-[11.5px] text-ink-muted">
-                          {daysAgo(r.created_at)}
+                        <span className="inline-flex items-center gap-1">
+                          <TimeAgo date={r.created_at} />
+                          <StaleIndicator
+                            date={r.created_at}
+                            cutoffDays={30}
+                            kind="signal"
+                          />
                         </span>
                       </td>
                       <td className="px-3 align-middle">
@@ -388,6 +397,13 @@ export function OutreachWorkspace({
                         >
                           {r._direction}
                         </span>
+                      </td>
+                      <td className="px-3 align-middle">
+                        <ConfidenceBadge
+                          confidence={r.confidence}
+                          priority={r.priority_score}
+                          preliminary={r.preliminary}
+                        />
                       </td>
                       <td className="px-3 align-middle text-right">
                         <span className="num tabular-nums text-[12.5px] text-ink">
