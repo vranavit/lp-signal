@@ -1,7 +1,7 @@
 # E Roadmap: Dashboard robustness and demo-readiness
 
 Established: 2026-04-23 (Day 9+)
-Status: Phase 1 in progress
+Status: Phase 1 shipped (2026-04-23)
 
 ## Goal
 
@@ -53,3 +53,28 @@ Make the Allocus dashboard demo-ready without rough edges. Priority is dashboard
 ## Execution principle
 
 Each phase is a self-contained session. Do not start Phase 2 in the same session as Phase 1. Document what shipped at the end of each phase before closing the session.
+
+## Phase 1 — shipped (2026-04-23)
+
+Commits on `main`, stacked on `bb118b4` (Day 9.2):
+
+- `f51016c` — docs: E roadmap for dashboard robustness and demo polish
+- `debf822` — E Phase 1.1: Advanced filters with URL state sync
+- `5f12ad2` — E Phase 1.2: Saved filter views + saved_filter_views table
+- `07439a1` — E Phase 1.3: Data accuracy surface — confidence badges, stale indicators, math modals
+- `f09dd47` — E Phase 1.4: Empty states and loading skeletons
+
+New surfaces:
+- `components/filters/` — CombinationFilter, filter-state, use-url-filter-state, SavedViewsMenu
+- `components/accuracy/` — ConfidenceBadge, TimeAgo, StaleIndicator, Extrapolated, MathModal, PensionHeroUnfunded
+- `components/ui/empty-state.tsx`, `components/ui/skeleton.tsx`
+- `app/(dashboard)/signals/{loading,error}.tsx`, `app/(dashboard)/outreach/{loading,error}.tsx`
+- `app/actions/saved-filter-views.ts`
+- `supabase/migrations/20260430000001_saved_filter_views.sql` (applied)
+
+Deferred from Phase 1 into Phase 2:
+- None. Full scope shipped.
+
+Known caveats for the next session:
+- Saved views delete does not confirm — one click removes. Consider a confirm prompt before Phase 3.
+- The math modal only wraps the pension profile hero number. The landing-page hero $25.9B remains a plain display — Phase 2 ("How we calculated this" modals on aggregate numbers) will wrap it.
