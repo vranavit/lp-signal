@@ -29,7 +29,9 @@ export function Hero({
             <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-neutral-200 bg-white text-[11.5px] text-neutral-700">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
               <span>
-                Live data from {stats.pensionsMonitored} US public pensions
+                {stats.pensionsMonitored == null
+                  ? "Live data from US public pensions"
+                  : `Live data from ${stats.pensionsMonitored} US public pensions`}
               </span>
             </div>
 
@@ -59,16 +61,24 @@ export function Hero({
             {/* 4-stat horizontal row with thin navy-200 vertical dividers */}
             <dl className="mt-12 grid grid-cols-2 sm:grid-cols-4 border-t border-neutral-200 pt-6 sm:divide-x divide-neutral-200">
               <HeroStat
-                value={formatUSD(stats.unfundedTotal)}
+                value={
+                  stats.unfundedTotal == null
+                    ? "—"
+                    : formatUSD(stats.unfundedTotal)
+                }
                 label="Tracked unfunded budget"
                 first
               />
               <HeroStat
-                value={String(stats.signalsCount)}
+                value={stats.signalsCount == null ? "—" : String(stats.signalsCount)}
                 label="Commitment signals"
               />
               <HeroStat
-                value={String(stats.pensionsMonitored)}
+                value={
+                  stats.pensionsMonitored == null
+                    ? "—"
+                    : String(stats.pensionsMonitored)
+                }
                 label="Pensions monitored"
               />
               <HeroStat

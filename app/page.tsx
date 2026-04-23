@@ -87,7 +87,17 @@ export default async function LandingPage() {
 
 async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
   try {
-    const [{ data: allocRows }, { count: signalsCount }] = await Promise.all([
+    // Pensions monitored = distinct plan_id across validated signals UNION
+    // pension_allocations. Allocations alone excludes pensions whose only
+    // data is board-minutes signals (Michigan, NYSTRS, PSERS, Oregon, MA
+    // PRIM). Signals alone excludes allocations-only plans (TRS Texas,
+    // Wisconsin SWIB, TRS Illinois). See session-2 diagnostic for the gap
+    // analysis.
+    const [
+      { data: allocRows, error: allocErr },
+      { count: signalsCount, error: signalsErr },
+      { data: signalPlanRows, error: signalPlansErr },
+    ] = await Promise.all([
       supabase
         .from("pension_allocations")
         .select(
@@ -98,7 +108,17 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
         .select("id", { count: "exact", head: true })
         .eq("seed_data", false)
         .not("validated_at", "is", null),
+      supabase
+        .from("signals")
+        .select("plan_id")
+        .eq("seed_data", false)
+        .not("validated_at", "is", null)
+        .not("plan_id", "is", null),
     ]);
+    if (allocErr) throw allocErr;
+    if (signalsErr) throw signalsErr;
+    if (signalPlansErr) throw signalPlansErr;
+
     const rows = (allocRows ?? []) as Array<{
       plan_id: string;
       asset_class: string;
@@ -136,18 +156,25 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
         unfundedTotal += Math.round((gap / 100) * Number(r.total_plan_aum_usd));
       }
     }
+
+    const trackedPlanIds = new Set<string>(byPlan.keys());
+    for (const r of (signalPlanRows ?? []) as Array<{ plan_id: string | null }>) {
+      if (r.plan_id) trackedPlanIds.add(r.plan_id);
+    }
+
     return {
       unfundedTotal,
       signalsCount: signalsCount ?? 0,
-      pensionsMonitored: byPlan.size,
+      pensionsMonitored: trackedPlanIds.size,
       pensionsWithActuals,
       pensionsTargetOnly,
     };
-  } catch {
+  } catch (err) {
+    console.error("[landing] loadLiveStats failed:", err);
     return {
-      unfundedTotal: 25_900_000_000,
-      signalsCount: 75,
-      pensionsMonitored: 7,
+      unfundedTotal: null,
+      signalsCount: null,
+      pensionsMonitored: null,
       pensionsWithActuals: 0,
       pensionsTargetOnly: 0,
     };

@@ -4,9 +4,12 @@
 // into app/page.tsx.
 
 export type LiveStats = {
-  unfundedTotal: number;
-  signalsCount: number;
-  pensionsMonitored: number;
+  // null when the loader failed. UI renders `—` instead of a stale
+  // hardcoded number, so a back-end outage cannot silently publish a
+  // wrong figure.
+  unfundedTotal: number | null;
+  signalsCount: number | null;
+  pensionsMonitored: number | null;
   // Day 9.5 H-1: honest labeling. A pension is "with actuals" when every
   // private-markets row in its latest snapshot has actual_pct set.
   pensionsWithActuals: number;
