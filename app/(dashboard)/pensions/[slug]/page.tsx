@@ -9,6 +9,7 @@ import { StaleIndicator } from "@/components/accuracy/stale-indicator";
 import { TimeAgo } from "@/components/accuracy/time-ago";
 import { Extrapolated } from "@/components/accuracy/extrapolated";
 import { PensionHeroUnfunded } from "@/components/accuracy/pension-hero-unfunded";
+import { availabilityFor, isEmpty } from "@/lib/plans/data-availability";
 import {
   privateMarketsUnfundedUsd,
   PRIVATE_MARKETS_CLASSES,
@@ -143,6 +144,97 @@ export default async function PensionProfilePage({
           | string
           | undefined) ?? null
       : null;
+
+  // Data-availability check. If a plan has no signals, no allocations, and
+  // no processed documents, render a calm "in progress" state instead of
+  // empty tables that read like a broken page.
+  const { count: docsCount } = await supabase
+    .from("documents")
+    .select("id", { count: "exact", head: true })
+    .eq("plan_id", plan.id)
+    .eq("processing_status", "complete");
+  const dataEmpty = isEmpty({
+    signals: signalsCount ?? 0,
+    allocations: latest.length,
+    documents: docsCount ?? 0,
+  });
+
+  if (dataEmpty) {
+    const avail = availabilityFor(plan.name);
+    return (
+      <div className="space-y-4 max-w-5xl">
+        <Link
+          href="/plans"
+          className="inline-flex items-center gap-1 text-[12px] text-ink-muted hover:text-ink"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
+          Plans
+        </Link>
+
+        <section className="card-surface px-5 py-5">
+          <div className="flex items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] text-ink-faint uppercase tracking-wide">
+                {plan.country} · Tier {plan.tier ?? "—"}
+              </div>
+              <h1 className="mt-1 text-[22px] font-semibold tracking-tightish text-ink leading-tight">
+                {plan.name}
+              </h1>
+              <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-muted">
+                <span>
+                  AUM{" "}
+                  <span className="num tabular-nums text-ink">
+                    {formatUSD(plan.aum_usd)}
+                  </span>
+                </span>
+                {planWebsite ? (
+                  <a
+                    href={planWebsite}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-accent-hi hover:underline"
+                  >
+                    Plan website ↗
+                  </a>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="card-surface py-12 px-6 flex flex-col items-center justify-center gap-4 text-center">
+          <div className="h-10 w-10 rounded-full bg-bg-panel border border-line flex items-center justify-center">
+            <span
+              aria-hidden
+              className={
+                "inline-block h-2 w-2 rounded-full " +
+                (avail.status === "blocked"
+                  ? "bg-amber-500"
+                  : "bg-neutral-400")
+              }
+            />
+          </div>
+          <div>
+            <div className="text-[14px] font-semibold text-ink">
+              {avail.status === "blocked"
+                ? "Blocked at source"
+                : "Data ingestion in progress"}
+            </div>
+            <div className="mt-1.5 text-[12.5px] text-ink-muted max-w-md leading-relaxed mx-auto">
+              {avail.reason ??
+                "This plan is in the Allocus pipeline but hasn't been ingested yet. Check back soon."}
+            </div>
+          </div>
+          <Link
+            href="/plans"
+            className="text-[12px] text-accent-hi hover:underline"
+          >
+            ← Back to plans
+          </Link>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 max-w-5xl">
