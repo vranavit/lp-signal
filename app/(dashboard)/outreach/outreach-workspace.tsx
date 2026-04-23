@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { ChevronDown, Download } from "lucide-react";
+import { useMemo } from "react";
+import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { daysAgo, formatUSD } from "@/lib/utils";
+import { CombinationFilter } from "@/components/filters/combination-filter";
+import { useUrlFilterState } from "@/components/filters/use-url-filter-state";
+import { tierFor } from "@/components/filters/filter-state";
 import type { SignalWithPlan } from "@/lib/types";
 
 export type OutreachRow = SignalWithPlan & {
@@ -26,24 +29,6 @@ export type PlanUnfundedRow = {
 };
 
 type Direction = "new" | "increase" | "decrease" | "unknown";
-type SizeBucket = "all" | "small" | "mid" | "large";
-
-const DEFAULT_STATE = {
-  assetClass: "all" as string,
-  sizeBucket: "all" as SizeBucket,
-  direction: "all" as string,
-  dateRange: "60" as string,
-  minUnfundedUsd: 0,
-};
-
-// Threshold options expressed in USD; UI presents short labels.
-const UNFUNDED_THRESHOLDS: { value: number; label: string }[] = [
-  { value: 0, label: "Any unfunded" },
-  { value: 100_000_000, label: "≥ $100M" },
-  { value: 500_000_000, label: "≥ $500M" },
-  { value: 1_000_000_000, label: "≥ $1B" },
-  { value: 5_000_000_000, label: "≥ $5B" },
-];
 
 function directionFor(r: OutreachRow): Direction {
   if (r.signal_type === 1) return "new";
@@ -68,13 +53,6 @@ function directionFor(r: OutreachRow): Direction {
   return "unknown";
 }
 
-function sizeBucketFor(amount: number | null | undefined): SizeBucket {
-  if (!amount) return "all";
-  if (amount < 50_000_000) return "small";
-  if (amount < 300_000_000) return "mid";
-  return "large";
-}
-
 function directionBadgeClass(d: Direction): string {
   if (d === "new") return "bg-accent/10 text-accent-hi border-accent/40";
   if (d === "increase") return "bg-green-600/10 text-green-700 border-green-600/40";
@@ -89,11 +67,17 @@ export function OutreachWorkspace({
   rows: OutreachRow[];
   planUnfunded: PlanUnfundedRow[];
 }) {
-  const [state, setState] = useState(DEFAULT_STATE);
+  const [state, setState, reset] = useUrlFilterState();
 
   const visibleUnfunded = useMemo(
-    () => planUnfunded.filter((p) => p.unfunded_usd >= state.minUnfundedUsd),
-    [planUnfunded, state.minUnfundedUsd],
+    () =>
+      planUnfunded.filter(
+        (p) =>
+          p.unfunded_usd >= state.unfundedMin &&
+          (state.geographies.length === 0 ||
+            state.geographies.includes(p.country)),
+      ),
+    [planUnfunded, state.unfundedMin, state.geographies],
   );
   const totalUnfunded = useMemo(
     () => visibleUnfunded.reduce((acc, p) => acc + p.unfunded_usd, 0),
@@ -105,7 +89,6 @@ export function OutreachWorkspace({
       rows.map((r) => ({
         ...r,
         _direction: directionFor(r),
-        _size: sizeBucketFor(r.commitment_amount_usd),
       })),
     [rows],
   );
@@ -118,19 +101,57 @@ export function OutreachWorkspace({
       .map((v) => ({ value: v, label: v }));
   }, [rows]);
 
+  const geographyOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) set.add(r.plan.country);
+    for (const p of planUnfunded) set.add(p.country);
+    return Array.from(set)
+      .sort()
+      .map((v) => ({ value: v, label: v }));
+  }, [rows, planUnfunded]);
+
   const filtered = useMemo(() => {
     const now = Date.now();
     const dayMs = 86_400_000;
-    const days: Record<string, number> = { "30": 30, "60": 60, "90": 90 };
+    const days: Record<string, number> = {
+      "7": 7,
+      "30": 30,
+      "60": 60,
+      "90": 90,
+    };
     const cutoff =
       state.dateRange in days ? now - days[state.dateRange] * dayMs : 0;
 
     return enriched.filter((r) => {
-      if (state.assetClass !== "all" && r.asset_class !== state.assetClass)
+      if (
+        state.assetClasses.length > 0 &&
+        (!r.asset_class || !state.assetClasses.includes(r.asset_class))
+      )
         return false;
-      if (state.sizeBucket !== "all" && r._size !== state.sizeBucket)
+      if (
+        state.geographies.length > 0 &&
+        !state.geographies.includes(r.plan.country)
+      )
         return false;
-      if (state.direction !== "all" && r._direction !== state.direction)
+      if (
+        state.directions.length > 0 &&
+        !state.directions.includes(r._direction)
+      )
+        return false;
+      if (state.confidenceTiers.length > 0) {
+        const t = tierFor(r.confidence, r.priority_score, r.preliminary);
+        if (!state.confidenceTiers.includes(t)) return false;
+      }
+      if (
+        state.checkSizeMin > 0 &&
+        (r.commitment_amount_usd ?? 0) < state.checkSizeMin
+      )
+        return false;
+      if (
+        state.checkSizeMax > 0 &&
+        r.commitment_amount_usd != null &&
+        r.commitment_amount_usd > state.checkSizeMax
+      )
         return false;
       if (cutoff && new Date(r.created_at).getTime() < cutoff) return false;
       return true;
@@ -145,7 +166,6 @@ export function OutreachWorkspace({
       "asset_class",
       "type",
       "direction",
-      "size_bucket",
       "amount_usd",
       "gp",
       "fund",
@@ -171,7 +191,6 @@ export function OutreachWorkspace({
           r.asset_class ?? "",
           r.signal_type === 1 ? "T1" : r.signal_type === 2 ? "T2" : "T3",
           r._direction,
-          r._size,
           r.commitment_amount_usd ?? "",
           (f?.gp as string) ?? "",
           (f?.fund_name as string) ?? "",
@@ -210,16 +229,6 @@ export function OutreachWorkspace({
               CAFR snapshot per plan.
             </div>
           </div>
-          <Select
-            value={String(state.minUnfundedUsd)}
-            onChange={(v) =>
-              setState((s) => ({ ...s, minUnfundedUsd: Number(v) }))
-            }
-            options={UNFUNDED_THRESHOLDS.map((t) => ({
-              value: String(t.value),
-              label: t.label,
-            }))}
-          />
           <div className="text-right">
             <div className="text-[10.5px] text-ink-faint uppercase tracking-wide">
               Total
@@ -280,65 +289,36 @@ export function OutreachWorkspace({
         )}
       </section>
 
-      {/* Filter bar */}
-      <div className="card-surface flex flex-wrap items-center gap-2 px-2.5 py-2">
-        <Select
-          value={state.assetClass}
-          onChange={(v) => setState((s) => ({ ...s, assetClass: v }))}
-          options={[
-            { value: "all", label: "All asset classes" },
-            ...assetOptions,
-          ]}
-        />
-        <Select
-          value={state.sizeBucket}
-          onChange={(v) =>
-            setState((s) => ({ ...s, sizeBucket: v as SizeBucket }))
-          }
-          options={[
-            { value: "all", label: "Any size" },
-            { value: "small", label: "< $50M (small/emerging)" },
-            { value: "mid", label: "$50M–$300M (mid-market)" },
-            { value: "large", label: "$300M+ (large-cap)" },
-          ]}
-        />
-        <Select
-          value={state.direction}
-          onChange={(v) => setState((s) => ({ ...s, direction: v }))}
-          options={[
-            { value: "all", label: "Any direction" },
-            { value: "new", label: "New commitment" },
-            { value: "increase", label: "Increase" },
-            { value: "decrease", label: "Decrease" },
-          ]}
-        />
-        <Select
-          value={state.dateRange}
-          onChange={(v) => setState((s) => ({ ...s, dateRange: v }))}
-          options={[
-            { value: "30", label: "Last 30 days" },
-            { value: "60", label: "Last 60 days" },
-            { value: "90", label: "Last 90 days" },
-            { value: "all", label: "All time" },
-          ]}
-        />
-
-        <div className="flex-1" />
-
-        <span className="num tabular-nums text-[12px] text-ink-muted">
-          {filtered.length} rows
-        </span>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={exportCsv}
-          disabled={filtered.length === 0}
-        >
-          <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
-          Export CSV
-        </Button>
-      </div>
+      {/* Filter bar (URL-synced) */}
+      <CombinationFilter
+        state={state}
+        setState={setState}
+        reset={reset}
+        config={{
+          showAssetClass: true,
+          showGeography: true,
+          showConfidence: true,
+          showDateRange: true,
+          showCheckSize: true,
+          showUnfunded: true,
+          showDirection: true,
+        }}
+        assetOptions={assetOptions}
+        geographyOptions={geographyOptions}
+        resultCount={filtered.length}
+        rightSlot={
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={exportCsv}
+            disabled={filtered.length === 0}
+          >
+            <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+            Export CSV
+          </Button>
+        }
+      />
 
       {/* Table */}
       {filtered.length === 0 ? (
@@ -357,7 +337,6 @@ export function OutreachWorkspace({
                   <Th>Plan</Th>
                   <Th>Asset</Th>
                   <Th>Dir</Th>
-                  <Th>Size</Th>
                   <Th className="text-right">Amount</Th>
                   <Th>GP → Fund</Th>
                   <Th>Summary</Th>
@@ -402,11 +381,6 @@ export function OutreachWorkspace({
                           {r._direction}
                         </span>
                       </td>
-                      <td className="px-3 align-middle">
-                        <span className="text-[11.5px] text-ink-muted">
-                          {r._size}
-                        </span>
-                      </td>
                       <td className="px-3 align-middle text-right">
                         <span className="num tabular-nums text-[12.5px] text-ink">
                           {formatUSD(r.commitment_amount_usd)}
@@ -447,36 +421,6 @@ export function OutreachWorkspace({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function Select({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-8 pl-2.5 pr-7 text-[13px] bg-bg border border-line rounded-sm appearance-none cursor-pointer text-ink hover:border-line-strong focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-colors duration-150"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink-faint pointer-events-none"
-        strokeWidth={1.75}
-      />
     </div>
   );
 }
