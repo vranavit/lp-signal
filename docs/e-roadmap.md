@@ -124,7 +124,34 @@ After the migration applies, the cron endpoints write to `scrape_fingerprints` o
 - Full "structured-change alert" (page structure changed, scraper broken) — today the only signal is `last_run_ok: false` in fingerprints.
 - Classifier prompt gap fix from Day 9.5 H-3 (Gap 1: `null` numeric fields bypass omit rule) — unblocks 4 more CalPERS/WSIB docs.
 
-**GP back-coverage outcome (post-session).** Task 2 ran with `--days=365` but yielded 0 new documents. Both Blackstone and Brookfield press release pages only expose recent content; historical archive is not accessible via their public index URLs. Conclusion: GP back-coverage via existing scrapers is a dead end. Signal density improvement requires adding new GPs (Carlyle, TPG, Bain Capital, Warburg Pincus) rather than deeper scraping of existing ones. Queued for Session 2.
+**GP back-coverage outcome (post-session).** Task 2 ran with `--days=365` but yielded 0 new documents. Both Blackstone and Brookfield press release pages only expose recent content; historical archive is not accessible via their public index URLs. Conclusion: GP back-coverage via existing scrapers is a dead end. Signal density improvement requires adding new GPs (Carlyle, TPG, Bain Capital, Warburg Pincus) rather than deeper scraping of existing ones. Queued for Session 3.
+
+### Day 10 Session 2 — shipped (2026-04-23)
+
+Session 2 pivot: instead of adding new GPs (as the post-mortem of the GP back-coverage dead-end suggested), extended the pension roster. Added 2 of 3 shortlisted pension scrapers; the third was blocked at the source.
+
+Commits (stacked on the Session 1 chain):
+
+- `8df1f66` — **feat(scrapers): add Oregon PERS pension scraper + cron**. Oregon Investment Council index page is server-rendered with 85 historical PDFs across 2014–2026; the scraper parses hrefs matching the OIC documents-tree pattern, dedupes by content hash, and uploads to storage. Live parse test confirmed 8 of the 10 most recent meetings (2026-04-15, 2026-03-04, 2026-01-21, etc.) correctly extracted with their meeting dates.
+- `57d721b` — **feat(scrapers): add Massachusetts PRIM pension scraper + cron**. PRIM uploads Board-meeting materials to `mapension.com/wp-content/uploads/YYYY/MM/` on a 1–3 month lead (packets) or lag (minutes); scraper probes candidate URLs for every Thursday in Feb/May/Aug/Dec across a ±3-month upload window. Live verification hit the Feb 27 2025 minutes PDF (valid 2.6MB application/pdf) from 1 of 8 probes; remaining probes are benign 404s absorbed by the notFound counter.
+
+Both scrapers fan out from the single `/api/cron/scrape-pension-wave-2` cron (daily 17:45 UTC) — the Session 1 per-source pattern would have exceeded the Vercel 15-cron limit. Future Session 3+ pensions register into the same fan-out.
+
+**Ohio PERS skipped** — `opers.org/about/board/meetings/` serves a dates-table with empty Agendas/Minutes columns and no public document index; no JavaScript rendering to work around, just no content. Equivalent posture to Florida SBA. The Ohio PERS `plans` row already exists from Day 9.3 and keeps its "Pending ingestion" availability pill.
+
+Migrations + first-run scrapes pending manual apply:
+
+```
+set -a; source .env.local; set +a
+pnpm tsx scripts/apply-migration.ts supabase/migrations/20260501000004_seed_oregon_pers.sql
+pnpm tsx scripts/apply-migration.ts supabase/migrations/20260501000005_seed_ma_prim.sql
+pnpm tsx scripts/scrape-oregon.ts --max-pdfs=30
+pnpm tsx scripts/scrape-ma-prim.ts --months-back=24
+```
+
+Expected outcome: Oregon ingest yields ~20+ packet PDFs from the last 2 years of OIC meetings; PRIM yields ~8 minutes PDFs from 2024–2025 Board meetings. Classifier runs under existing daily cron — first signals surface within ~24h.
+
+Post-Session 2 pension coverage: **15 plans** (13 existing + 2 new). Plans with transaction-data coverage expected to rise from 7 to 9 once Oregon + PRIM ingestion completes.
 
 ### Fund fact sheet ingestion (Phase 4+)
 

@@ -15,6 +15,8 @@ Established 2026-04-23 (Day 10 Session 1) during the continuous-ingestion build.
 | `pa_psers` | `lib/scrapers/pa-psers.ts` | Board resolution PDFs | `pa.gov/.../psers/documents/board...` | daily check (monthly meetings) | `/api/cron/scrape-psers` | `0 17 * * *` | Per-fund resolution PDFs |
 | `michigan` | `lib/scrapers/michigan.ts` | Quarterly SMIB reports | `michigan.gov/-/media/.../SMRS` | daily check (quarterly publish) | `/api/cron/scrape-michigan` | `15 17 * * *` | SMIB quarterly |
 | `wsib` | `lib/scrapers/wsib.ts` | Board meeting packets (PDF) | `sib.wa.gov/docs/meetings/...` | daily check (monthly meetings) | `/api/cron/scrape-wsib` | `30 17 * * *` | PMC PDFs |
+| `oregon_pers` | `lib/scrapers/oregon.ts` | Board meeting packets + minutes (PDF) | `oregon.gov/treasury/invested-for-oregon/.../YYYY/*.pdf` | daily check (8 meetings/yr) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | Oregon Investment Council; index-page scrape, 85 historical candidates |
+| `ma_prim` | `lib/scrapers/ma-prim.ts` | Board meeting packets + minutes (PDF) | `mapension.com/wp-content/uploads/YYYY/MM/Board-Meeting-*.pdf` | daily check (4 meetings/yr) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | PRIM; candidate-URL probe pattern, upload-month window ±3 around meeting date |
 | `cafr-*` | `scripts/scrape-cafr-*.ts` | Annual CAFR / ACFR | various | weekly check (annual publish, 6-12 mo lag) | `/api/cron/scrape-cafr` | `0 18 * * 1` | One consolidated weekly cron fans out to each `scrape-cafr-*` target |
 
 ## Supporting infrastructure
@@ -26,7 +28,7 @@ Established 2026-04-23 (Day 10 Session 1) during the continuous-ingestion build.
 | `/api/cron/policy-change-alert` | `0 15 * * *` | Daily digest of target-allocation moves |
 | `/api/cron/scraper-health-check` | `0 19 * * *` | Alerts when a source hasn't been checked in 2× its expected cadence |
 
-Total cron count: **14** (11 scraping + classify + 2 alerts + health-check). Under the Vercel 15-cron hard stop. If/when we add Ohio PERS or NC Retirement scrapers they can share a `scrape-other-pension` daily cron.
+Total cron count: **15** (11 scraping + 1 Session-2 fan-out + classify + 2 alerts + health-check). Right at the Vercel 15-cron hard stop. New pension sources (Session 3+) register themselves into the `scrape-pension-wave-2` fan-out instead of getting their own Vercel cron entry.
 
 ## Deliberately skipped
 
@@ -34,6 +36,7 @@ Total cron count: **14** (11 scraping + classify + 2 alerts + health-check). Und
 - **KKR** — Pure SvelteKit SPA with no SSR. Requires headless browser. Deferred per Day 2 decision.
 - **Ares** — Cloudflare JS challenge. Deferred.
 - **Florida SBA** — Akamai edge block. Deferred; Florida SBA pension row carries a "Blocked by source" availability pill on `/plans` (see Day 9.3 H-2 fix).
+- **Ohio PERS** — `opers.org/about/board/meetings/` exposes only a dates-table with empty Agendas/Minutes columns; no public document index to crawl. Investigated in Session 2 and flagged blocked. Ohio PERS row exists in `plans` from Day 9.3 and carries the same "Pending ingestion" availability pill as the other blocked pensions.
 
 ## Fingerprint discipline
 
