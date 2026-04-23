@@ -44,11 +44,60 @@ Make the Allocus dashboard demo-ready without rough edges. Priority is dashboard
 2. Signal detail pages (one signal per URL, full audit trail, related signals)
 3. Public read-only share links (for demo handoff)
 
+## Phase 4: Continuous ingestion (freshness guarantee)
+
+After Day 9.4 fixed the signal date display to show true event dates instead of ingestion timestamps, many signals now correctly show as stale (>30 days since event). This is accurate but creates operational pressure: Allocus is only as fresh as its last scrape.
+
+The fix is continuous re-scraping — checking every tracked pension source on a regular cadence so new events surface within 30 days of occurrence.
+
+### Scope
+
+1. **Scheduled re-scrape crons per pension source**
+   - Board minutes (PSERS, NYSTRS, CalSTRS, etc.): check monthly (board meetings typically monthly or quarterly)
+   - Monthly transaction reports (CalPERS, NYSCRF): check monthly
+   - CAFR pages: check quarterly (new CAFRs drop 6-12 months after FY end)
+   - GP press release pages: check daily
+
+2. **Change detection**
+   - Compare current page contents to last-seen hash
+   - If new document detected → trigger classifier pipeline
+   - If page structure changed (scraper broken) → alert
+
+3. **Ingestion freshness metrics**
+   - Per-source "last checked" timestamp visible in admin view
+   - Aggregate "avg days to ingest" metric across all sources
+   - Alert if any source hasn't been checked in 2× its expected interval
+
+4. **Operational dashboard**
+   - Internal-only `/admin/ingestion` view showing per-source status
+   - Red/yellow/green indicator per source
+   - Manual "re-check now" button per source
+
+### Why this matters
+
+- Value prop shifts from "we have data" to "we detect changes as they happen"
+- Honest claim of freshness requires operational backing
+- Makes Allocus a monitoring product, not just a database
+
+### Deferred to Phase 4 because
+
+- Requires working scraper infrastructure that's already solid (most scrapers are)
+- Requires per-source cadence tuning (operational, not architectural)
+- Phase 2 and Phase 3 work higher-ROI for closed beta stage (polish and demo features)
+- Re-scraping costs more API tokens — worth cost-modeling before turning on broadly
+
+### Prerequisites before starting Phase 4
+
+- [ ] Phase 2 shipped (user-facing polish)
+- [ ] Phase 3 shipped (demo features)
+- [ ] Verified existing scrapers are all stable (no silent breakages)
+- [ ] API spend model updated to reflect continuous ingestion cost
+
 ## Explicitly deferred
 
 - Email digest functionality — nobody has requested it; existing crons are fine
-- Cross-source data validation — Phase 4+ once there's a paying customer
-- User-reported data corrections — Phase 4+
+- Cross-source data validation — Phase 5+ once there's a paying customer
+- User-reported data corrections — Phase 5+
 
 ## Execution principle
 
