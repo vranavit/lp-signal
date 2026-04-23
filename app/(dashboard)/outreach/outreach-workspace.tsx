@@ -108,8 +108,12 @@ export function OutreachWorkspace({
 
   const geographyOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const r of rows) set.add(r.plan.country);
-    for (const p of planUnfunded) set.add(p.country);
+    for (const r of rows) {
+      if (r.plan?.country) set.add(r.plan.country);
+    }
+    for (const p of planUnfunded) {
+      if (p.country) set.add(p.country);
+    }
     return Array.from(set)
       .sort()
       .map((v) => ({ value: v, label: v }));
@@ -135,7 +139,7 @@ export function OutreachWorkspace({
         return false;
       if (
         state.geographies.length > 0 &&
-        !state.geographies.includes(r.plan.country)
+        (!r.plan?.country || !state.geographies.includes(r.plan.country))
       )
         return false;
       if (
@@ -191,8 +195,8 @@ export function OutreachWorkspace({
       lines.push(
         [
           r.created_at,
-          r.plan.name,
-          r.plan.country,
+          r.plan?.name ?? "",
+          r.plan?.country ?? "",
           r.asset_class ?? "",
           r.signal_type === 1 ? "T1" : r.signal_type === 2 ? "T2" : "T3",
           r._direction,
@@ -387,10 +391,10 @@ export function OutreachWorkspace({
                       </td>
                       <td className="px-3 align-middle">
                         <div className="text-[12.5px] text-ink truncate max-w-[160px]">
-                          {r.plan.name}
+                          {r.plan?.name ?? "—"}
                         </div>
                         <div className="num text-[10.5px] text-ink-faint">
-                          {r.plan.country}
+                          {r.plan?.country ?? "—"}
                         </div>
                       </td>
                       <td className="px-3 align-middle">

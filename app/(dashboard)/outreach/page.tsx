@@ -32,17 +32,24 @@ export default async function OutreachPage() {
     redirect("/signals");
   }
 
+  // Outreach is a pension-focused cross-firm view. GP-side press-release
+  // signals (plan_id null, gp_id set) belong on /signals instead — they
+  // have no pension context to target here and previously crashed the
+  // client workspace at r.plan.country. Filter them out at the source.
   const { data, error } = await supabase
     .from("signals")
     .select(
-      "id, plan_id, gp_id, document_id, signal_type, confidence, priority_score, asset_class, summary, fields, source_page, source_quote, commitment_amount_usd, preliminary, created_at, plan:plans(id, name, country, aum_usd), document:documents(id, source_url, meeting_date)",
+      "id, plan_id, gp_id, document_id, signal_type, confidence, priority_score, asset_class, summary, fields, source_page, source_quote, commitment_amount_usd, preliminary, created_at, plan:plans!inner(id, name, country, aum_usd), document:documents(id, source_url, meeting_date)",
     )
     .not("validated_at", "is", null)
+    .not("plan_id", "is", null)
     .eq("seed_data", false)
     .order("created_at", { ascending: false })
     .limit(500);
 
-  const rows = (data ?? []) as unknown as OutreachRow[];
+  const rows = ((data ?? []) as unknown as OutreachRow[]).filter(
+    (r) => r.plan != null,
+  );
 
   // Compute unfunded budget per plan from the latest pension_allocations
   // snapshot. Server-side so the outreach UI can filter without paginating.
