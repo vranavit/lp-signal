@@ -15,6 +15,7 @@
     { "path": "/api/cron/scrape-psers", "schedule": "0 17 * * *" },
     { "path": "/api/cron/scrape-michigan", "schedule": "15 17 * * *" },
     { "path": "/api/cron/scrape-wsib", "schedule": "30 17 * * *" },
+    { "path": "/api/cron/scrape-pension-wave-2", "schedule": "45 17 * * *" },
 
     { "path": "/api/cron/scrape-cafr", "schedule": "0 18 * * 1" },
 
