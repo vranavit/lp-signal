@@ -505,6 +505,7 @@ async function classifyCafr(
     plan_id: plan.id,
     as_of_date: doc.meeting_date,
     asset_class: a.asset_class,
+    sub_class: a.sub_class ?? null,
     target_pct: a.target_pct,
     target_min_pct: a.target_min_pct ?? null,
     target_max_pct: a.target_max_pct ?? null,

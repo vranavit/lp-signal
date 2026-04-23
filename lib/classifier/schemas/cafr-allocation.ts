@@ -54,6 +54,10 @@ const coercedPositiveInt = z.union([
 
 const allocationSchema = z.object({
   asset_class: assetClassEnum,
+  // v1.1-cafr: sub-sleeve label when the policy table distinguishes
+  // policy targets inside a class (not when it lists implementation
+  // sub-strategies like Buyout/Growth/Secondaries within PE).
+  sub_class: z.string().min(1).max(120).nullable().optional(),
   target_pct: z.number().min(0).max(100),
   target_min_pct: z.number().min(0).max(100).nullable().optional(),
   target_max_pct: z.number().min(0).max(100).nullable().optional(),
@@ -90,7 +94,12 @@ export const recordAllocationsToolSchema: Tool = {
               type: "string",
               enum: [...ALLOCATION_ASSET_CLASSES],
               description:
-                "Standardized asset class. Roll sub-categories up to the parent (e.g. buyout / venture / growth → PE; IG / HY → Fixed Income).",
+                "Standardized asset class. Roll implementation sub-strategies up to the parent (e.g. buyout / venture / growth → PE; IG / HY → Fixed Income). When the policy table lists distinct *policy targets* inside a class (e.g. Domestic / International / Emerging Markets under Public Equity), emit separate rows with sub_class populated — see sub_class.",
+            },
+            sub_class: {
+              type: "string",
+              description:
+                "Sub-sleeve label within asset_class, verbatim from the policy table, when the table gives multiple policy targets inside one asset class (e.g. 'Domestic' / 'International' / 'Emerging Markets' under Public Equity; 'Risk Mitigating Strategies' / 'Collaborative Strategies' under CalSTRS Other; 'TIPS' under Fixed Income). Null when the class is a single undivided policy row.",
             },
             target_pct: {
               type: "number",
