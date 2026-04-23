@@ -16,6 +16,15 @@ const config: Config = {
           "Arial",
           "sans-serif",
         ],
+        serif: [
+          "var(--font-instrument-serif)",
+          "ui-serif",
+          "Georgia",
+          "Cambria",
+          "Times New Roman",
+          "Times",
+          "serif",
+        ],
         mono: [
           "var(--font-jetbrains)",
           "ui-monospace",
