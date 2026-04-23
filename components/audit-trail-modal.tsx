@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { ExternalLink, FileText, X } from "lucide-react";
 import { getSourceInfo, type SourceInfo } from "@/app/actions/source-url";
 import { formatDate } from "@/lib/utils";
+import type { ResolvedEventDate } from "@/lib/signals/event-date";
 
 /**
  * Reusable audit-trail modal. Click the trigger to open a modal showing
@@ -28,6 +29,10 @@ export type AuditTrailTriggerProps = {
   sourceQuote: string | null;
   label?: string;
   inline?: boolean;
+  // Day 9.4: optional event-date metadata so the modal can show both the
+  // real event date (approval / meeting) and the ingestion timestamp.
+  eventDate?: ResolvedEventDate | null;
+  ingestedAt?: string | null;
 };
 
 export function AuditTrailTrigger(props: AuditTrailTriggerProps) {
@@ -56,6 +61,8 @@ export function AuditTrailTrigger(props: AuditTrailTriggerProps) {
           documentId={props.documentId}
           sourcePage={props.sourcePage}
           sourceQuote={props.sourceQuote}
+          eventDate={props.eventDate ?? null}
+          ingestedAt={props.ingestedAt ?? null}
           onClose={() => setOpen(false)}
         />
       ) : null}
@@ -67,11 +74,15 @@ function AuditTrailModal({
   documentId,
   sourcePage,
   sourceQuote,
+  eventDate,
+  ingestedAt,
   onClose,
 }: {
   documentId: string;
   sourcePage: number | null;
   sourceQuote: string | null;
+  eventDate: ResolvedEventDate | null;
+  ingestedAt: string | null;
   onClose: () => void;
 }) {
   const [info, setInfo] = React.useState<SourceInfo | null>(null);
@@ -165,6 +176,42 @@ function AuditTrailModal({
               ) : null}
             </div>
           </Field>
+
+          {eventDate || ingestedAt ? (
+            <Field label="Timeline">
+              <div className="text-[12.5px] text-ink space-y-0.5">
+                {eventDate ? (
+                  <div>
+                    <span className="text-ink-muted">
+                      {eventDate.source === "approval"
+                        ? "Board approval:"
+                        : eventDate.source === "meeting"
+                        ? "Board meeting:"
+                        : "Event date unavailable · ingestion:"}
+                    </span>{" "}
+                    <span
+                      className={
+                        "num tabular-nums " +
+                        (eventDate.source === "ingestion"
+                          ? "text-amber-700"
+                          : "text-ink")
+                      }
+                    >
+                      {formatDate(eventDate.date)}
+                    </span>
+                  </div>
+                ) : null}
+                {ingestedAt ? (
+                  <div>
+                    <span className="text-ink-muted">Ingested:</span>{" "}
+                    <span className="num tabular-nums text-ink-muted">
+                      {formatDate(ingestedAt)}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            </Field>
+          ) : null}
 
           <Field label={sourcePage != null ? `Page ${sourcePage}` : "Source quote"}>
             {sourceQuote ? (

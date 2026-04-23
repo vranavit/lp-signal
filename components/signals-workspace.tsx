@@ -7,6 +7,7 @@ import { CombinationFilter } from "@/components/filters/combination-filter";
 import { useUrlFilterState } from "@/components/filters/use-url-filter-state";
 import { tierFor } from "@/components/filters/filter-state";
 import { SavedViewsMenu } from "@/components/filters/saved-views-menu";
+import { resolveEventDate } from "@/lib/signals/event-date";
 import type { SignalWithPlan } from "@/lib/types";
 
 export type SignalWithDoc = SignalWithPlan & {
@@ -92,7 +93,10 @@ export function SignalsWorkspace({ rows }: { rows: SignalWithDoc[] }) {
         r.commitment_amount_usd > state.checkSizeMax
       )
         return false;
-      if (cutoff && new Date(r.created_at).getTime() < cutoff) return false;
+      if (cutoff) {
+        const ev = resolveEventDate(r);
+        if (new Date(ev.date).getTime() < cutoff) return false;
+      }
       if (q) {
         const hay = [
           r.summary,

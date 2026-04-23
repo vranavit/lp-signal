@@ -9,6 +9,10 @@ import { formatUSD } from "@/lib/utils";
 import { ConfidenceBadge } from "@/components/accuracy/confidence-badge";
 import { TimeAgo } from "@/components/accuracy/time-ago";
 import { StaleIndicator } from "@/components/accuracy/stale-indicator";
+import {
+  eventDateTooltip,
+  resolveEventDate,
+} from "@/lib/signals/event-date";
 import { CombinationFilter } from "@/components/filters/combination-filter";
 import { useUrlFilterState } from "@/components/filters/use-url-filter-state";
 import { tierFor } from "@/components/filters/filter-state";
@@ -162,14 +166,19 @@ export function OutreachWorkspace({
         r.commitment_amount_usd > state.checkSizeMax
       )
         return false;
-      if (cutoff && new Date(r.created_at).getTime() < cutoff) return false;
+      if (cutoff) {
+        const ev = resolveEventDate(r);
+        if (new Date(ev.date).getTime() < cutoff) return false;
+      }
       return true;
     });
   }, [enriched, state]);
 
   function exportCsv() {
     const header = [
-      "created_at",
+      "event_date",
+      "event_date_source",
+      "ingested_at",
       "plan",
       "country",
       "asset_class",
@@ -192,8 +201,11 @@ export function OutreachWorkspace({
     const lines = [header.join(",")];
     for (const r of filtered) {
       const f = r.fields as Record<string, unknown>;
+      const ev = resolveEventDate(r);
       lines.push(
         [
+          ev.date.slice(0, 10),
+          ev.source,
           r.created_at,
           r.plan?.name ?? "",
           r.plan?.country ?? "",
@@ -380,15 +392,27 @@ export function OutreachWorkspace({
                       className="h-10 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02] hover:bg-bg-hover transition-colors duration-150"
                     >
                       <td className="px-3 align-middle">
-                        <span className="inline-flex items-center gap-1">
-                          <TimeAgo date={r.created_at} />
-                          <StaleIndicator
-                            date={r.created_at}
-                            cutoffDays={30}
-                            kind="signal"
-                            signalType={r.signal_type}
-                          />
-                        </span>
+                        {(() => {
+                          const ev = resolveEventDate(r);
+                          const isFallback = ev.source === "ingestion";
+                          return (
+                            <span className="inline-flex items-center gap-1">
+                              <TimeAgo
+                                date={ev.date}
+                                title={eventDateTooltip(ev)}
+                                className={
+                                  isFallback ? "text-amber-700" : undefined
+                                }
+                              />
+                              <StaleIndicator
+                                date={ev.date}
+                                cutoffDays={30}
+                                kind="signal"
+                                signalType={r.signal_type}
+                              />
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-3 align-middle">
                         <div className="text-[12.5px] text-ink truncate max-w-[160px]">

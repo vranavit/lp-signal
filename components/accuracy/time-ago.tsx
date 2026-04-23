@@ -1,12 +1,17 @@
-// Relative + absolute timestamp: shows "2d ago"; tooltip shows full ISO.
+// Relative + absolute timestamp: shows "2d ago"; tooltip shows full ISO by
+// default, or a caller-supplied title when more context is available
+// (e.g. "Board approval date: 2025-09-12" for signal rows after the
+// event-date fix in Day 9.4).
 // Server-renderable (no useEffect); the `title` attribute handles hover.
 
 export function TimeAgo({
   date,
   className = "",
+  title,
 }: {
   date: string | Date | null | undefined;
   className?: string;
+  title?: string;
 }) {
   if (!date) {
     return (
@@ -43,9 +48,11 @@ export function TimeAgo({
       : days < 365
       ? `${Math.floor(days / 30)}mo ago`
       : `${Math.floor(days / 365)}y ago`;
+  const defaultTitle =
+    d.toISOString().slice(0, 16).replace("T", " ") + " UTC";
   return (
     <span
-      title={d.toISOString().slice(0, 16).replace("T", " ") + " UTC"}
+      title={title ?? defaultTitle}
       className={
         "font-mono tabular-nums text-[11px] text-ink-faint cursor-help " +
         className

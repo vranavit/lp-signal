@@ -11,6 +11,10 @@ import { Extrapolated } from "@/components/accuracy/extrapolated";
 import { PensionHeroUnfunded } from "@/components/accuracy/pension-hero-unfunded";
 import { availabilityFor, isEmpty } from "@/lib/plans/data-availability";
 import {
+  eventDateTooltip,
+  resolveEventDate,
+} from "@/lib/signals/event-date";
+import {
   privateMarketsUnfundedUsd,
   PRIVATE_MARKETS_CLASSES,
   unfundedUsd,
@@ -430,19 +434,33 @@ export default async function PensionProfilePage({
                       className="h-10 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02] hover:bg-bg-hover transition-colors duration-150"
                     >
                       <td className="px-3 align-middle">
-                        <span className="inline-flex items-center gap-1">
-                          <span className="num tabular-nums text-[11.5px] text-ink-muted">
-                            {formatDate(
-                              s.document?.meeting_date ?? s.created_at,
-                            )}
-                          </span>
-                          <StaleIndicator
-                            date={s.document?.meeting_date ?? s.created_at}
-                            cutoffDays={30}
-                            kind="signal"
-                            signalType={s.signal_type}
-                          />
-                        </span>
+                        {(() => {
+                          const ev = resolveEventDate(s);
+                          const isFallback = ev.source === "ingestion";
+                          return (
+                            <span
+                              className="inline-flex items-center gap-1"
+                              title={eventDateTooltip(ev)}
+                            >
+                              <span
+                                className={
+                                  "num tabular-nums text-[11.5px] cursor-help " +
+                                  (isFallback
+                                    ? "text-amber-700"
+                                    : "text-ink-muted")
+                                }
+                              >
+                                {formatDate(ev.date)}
+                              </span>
+                              <StaleIndicator
+                                date={ev.date}
+                                cutoffDays={30}
+                                kind="signal"
+                                signalType={s.signal_type}
+                              />
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-3 align-middle text-[11px] text-ink-muted">
                         {tag}
@@ -482,6 +500,8 @@ export default async function PensionProfilePage({
                           documentId={s.document_id}
                           sourcePage={s.source_page}
                           sourceQuote={s.source_quote}
+                          eventDate={resolveEventDate(s)}
+                          ingestedAt={s.created_at}
                           inline
                           label=""
                         />

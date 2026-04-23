@@ -10,6 +10,7 @@ import {
   formatPriorityScore,
   formatUSD,
 } from "@/lib/utils";
+import { resolveEventDate } from "@/lib/signals/event-date";
 import type { SignalWithDoc } from "@/components/signals-workspace";
 
 function priorityTone(score: number): "hi" | "mid" | "lo" {
@@ -122,6 +123,8 @@ export function SignalDetailPanel({ signal }: { signal: SignalWithDoc | null }) 
               documentId={signal.document_id}
               sourcePage={signal.source_page}
               sourceQuote={signal.source_quote}
+              eventDate={resolveEventDate(signal)}
+              ingestedAt={signal.created_at}
               label="View audit trail"
             />
           ) : pdfUrl ? (

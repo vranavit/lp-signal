@@ -8,6 +8,10 @@ import { formatPriorityScore, formatUSD } from "@/lib/utils";
 import { ConfidenceBadge } from "@/components/accuracy/confidence-badge";
 import { TimeAgo } from "@/components/accuracy/time-ago";
 import { StaleIndicator } from "@/components/accuracy/stale-indicator";
+import {
+  eventDateTooltip,
+  resolveEventDate,
+} from "@/lib/signals/event-date";
 import type { SignalWithDoc } from "@/components/signals-workspace";
 
 function typeLabel(t: 1 | 2 | 3) {
@@ -193,21 +197,35 @@ export function SignalTable({
                     </span>
                   </td>
                   <td className="px-4 py-0 align-middle text-right">
-                    <span className="inline-flex items-center gap-1 justify-end">
-                      <TimeAgo date={r.created_at} />
-                      <StaleIndicator
-                        date={r.created_at}
-                        cutoffDays={30}
-                        kind="signal"
-                        signalType={r.signal_type}
-                      />
-                    </span>
+                    {(() => {
+                      const ev = resolveEventDate(r);
+                      const isFallback = ev.source === "ingestion";
+                      return (
+                        <span className="inline-flex items-center gap-1 justify-end">
+                          <TimeAgo
+                            date={ev.date}
+                            title={eventDateTooltip(ev)}
+                            className={
+                              isFallback ? "text-amber-700" : undefined
+                            }
+                          />
+                          <StaleIndicator
+                            date={ev.date}
+                            cutoffDays={30}
+                            kind="signal"
+                            signalType={r.signal_type}
+                          />
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-2 py-0 align-middle text-right">
                     <AuditTrailTrigger
                       documentId={r.document_id}
                       sourcePage={r.source_page}
                       sourceQuote={r.source_quote}
+                      eventDate={resolveEventDate(r)}
+                      ingestedAt={r.created_at}
                       inline
                       label=""
                     />
