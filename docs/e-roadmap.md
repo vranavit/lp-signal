@@ -124,6 +124,8 @@ After the migration applies, the cron endpoints write to `scrape_fingerprints` o
 - Full "structured-change alert" (page structure changed, scraper broken) — today the only signal is `last_run_ok: false` in fingerprints.
 - Classifier prompt gap fix from Day 9.5 H-3 (Gap 1: `null` numeric fields bypass omit rule) — unblocks 4 more CalPERS/WSIB docs.
 
+**GP back-coverage outcome (post-session).** Task 2 ran with `--days=365` but yielded 0 new documents. Both Blackstone and Brookfield press release pages only expose recent content; historical archive is not accessible via their public index URLs. Conclusion: GP back-coverage via existing scrapers is a dead end. Signal density improvement requires adding new GPs (Carlyle, TPG, Bain Capital, Warburg Pincus) rather than deeper scraping of existing ones. Queued for Session 2.
+
 ### Fund fact sheet ingestion (Phase 4+)
 
 Current limitation: some pensions publish allocation **targets** in the CAFR but **actuals** only in quarterly fund fact sheets or investment performance reports. 3 of 6 pensions with allocation data are currently target-only at their latest snapshot (NYSCRF 2025-03-31, WSIB 2025-06-30, Wisconsin SWIB 2024-12-31; TRS Texas 2025-08-31 reports non-PM classes only). 25 of 74 `pension_allocations` rows have `actual_pct IS NULL` and silently contribute `$0` to the unfunded-budget total.
