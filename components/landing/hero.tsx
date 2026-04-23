@@ -21,25 +21,8 @@ export function Hero({
     .concat(" UTC");
 
   return (
-    <section className="hero-surface relative overflow-hidden border-b border-neutral-200">
-      {/* Decorative giant $ — serif, outside the content column. Clipped by the
-          section's overflow-hidden. Sits behind everything via negative z. */}
-      <div
-        aria-hidden
-        className="pointer-events-none select-none absolute font-serif font-normal leading-none"
-        style={{
-          top: "-80px",
-          left: "-120px",
-          fontSize: "800px",
-          color: "#0f1b3d",
-          opacity: 0.05,
-          zIndex: 0,
-        }}
-      >
-        $
-      </div>
-
-      <div className="relative z-10 mx-auto max-w-[1200px] px-6 pt-16 pb-20 sm:pt-20 sm:pb-24">
+    <section className="hero-surface relative border-b border-neutral-200">
+      <div className="relative mx-auto max-w-[1200px] px-6 pt-16 pb-20 sm:pt-20 sm:pb-24">
         <div className="grid grid-cols-1 lg:grid-cols-[55fr_45fr] gap-12 lg:gap-14 items-start">
           {/* LEFT */}
           <div>
@@ -50,46 +33,20 @@ export function Hero({
               </span>
             </div>
 
-            {/* THE number. 160px desktop / 100px tablet / 72px mobile. */}
-            <div
-              className="mt-8 font-mono font-bold text-navy tabular-nums leading-[0.9] text-[72px] sm:text-[100px] lg:text-[160px]"
-              style={{ letterSpacing: "-0.04em" }}
+            <h1
+              className="mt-7 font-serif font-normal text-navy text-[44px] sm:text-[56px] lg:text-[72px] leading-[0.98] max-w-[640px]"
+              style={{ letterSpacing: "-0.03em" }}
             >
-              {formatUSD(stats.unfundedTotal)}
-            </div>
+              LP intelligence for private markets fundraising.
+            </h1>
 
-            <div className="mt-4 text-[11px] uppercase text-neutral-500 font-medium max-w-md"
-              style={{ letterSpacing: "0.1em" }}
-            >
-              Unfunded private markets budget — tracked across US public pensions
-            </div>
-
-            {/* Product explanation — Inter 22px, neutral-800, line-height 1.5 */}
-            <p className="mt-8 max-w-[580px] text-[19px] sm:text-[22px] text-neutral-800 leading-[1.5]">
+            <p className="mt-6 max-w-[580px] text-[19px] sm:text-[22px] text-neutral-800 leading-[1.5]">
               Allocus tracks allocation gaps and commitment signals across
               US public pension funds, so private markets IR teams know
               which LPs have budget to deploy right now.
             </p>
 
-            {/* Proof strip — three inline mono numbers separated by · */}
-            <div className="mt-10 flex flex-wrap items-baseline gap-x-4 gap-y-2 text-[13px] text-neutral-700">
-              <ProofInline
-                value={String(stats.signalsCount)}
-                label="commitment signals"
-              />
-              <span className="text-neutral-300">·</span>
-              <ProofInline
-                value={String(stats.pensionsMonitored)}
-                label="pensions monitored"
-              />
-              <span className="text-neutral-300">·</span>
-              <ProofInline
-                value={String(pipeline.policyChanges)}
-                label="policy changes detected"
-              />
-            </div>
-
-            <div className="mt-10 flex flex-wrap items-center gap-5">
+            <div className="mt-8 flex flex-wrap items-center gap-5">
               <DemoRequestButton label="Request demo" />
               <a
                 href="#proof"
@@ -98,6 +55,27 @@ export function Hero({
                 See live data ↓
               </a>
             </div>
+
+            {/* 4-stat horizontal row with thin navy-200 vertical dividers */}
+            <dl className="mt-12 grid grid-cols-2 sm:grid-cols-4 border-t border-neutral-200 pt-6 sm:divide-x divide-neutral-200">
+              <HeroStat
+                value={formatUSD(stats.unfundedTotal)}
+                label="Tracked unfunded budget"
+                first
+              />
+              <HeroStat
+                value={String(stats.signalsCount)}
+                label="Commitment signals"
+              />
+              <HeroStat
+                value={String(stats.pensionsMonitored)}
+                label="Pensions monitored"
+              />
+              <HeroStat
+                value={String(pipeline.policyChanges)}
+                label="Policy changes detected"
+              />
+            </dl>
           </div>
 
           {/* RIGHT — Bloomberg-style live feed panel */}
@@ -108,14 +86,30 @@ export function Hero({
   );
 }
 
-function ProofInline({ value, label }: { value: string; label: string }) {
+function HeroStat({
+  value,
+  label,
+  first = false,
+}: {
+  value: string;
+  label: string;
+  first?: boolean;
+}) {
   return (
-    <span className="inline-flex items-baseline gap-1.5">
-      <span className="font-mono font-semibold tabular-nums text-navy text-[15px]">
+    <div className={first ? "pr-5 sm:pr-5" : "px-5 first:pl-0"}>
+      <dt
+        className="font-mono tabular-nums font-bold text-navy text-[28px] sm:text-[30px] leading-none"
+        style={{ letterSpacing: "-0.02em" }}
+      >
         {value}
-      </span>
-      <span className="text-neutral-600">{label}</span>
-    </span>
+      </dt>
+      <dd
+        className="mt-2.5 text-[11px] uppercase text-neutral-500 font-medium"
+        style={{ letterSpacing: "0.1em" }}
+      >
+        {label}
+      </dd>
+    </div>
   );
 }
 
