@@ -7,6 +7,10 @@ export type LiveStats = {
   unfundedTotal: number;
   signalsCount: number;
   pensionsMonitored: number;
+  // Day 9.5 H-1: honest labeling. A pension is "with actuals" when every
+  // private-markets row in its latest snapshot has actual_pct set.
+  pensionsWithActuals: number;
+  pensionsTargetOnly: number;
 };
 
 export type CompactSignal = {

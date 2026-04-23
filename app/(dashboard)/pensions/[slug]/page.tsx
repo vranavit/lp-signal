@@ -15,6 +15,7 @@ import {
   resolveEventDate,
 } from "@/lib/signals/event-date";
 import {
+  privateMarketsUnfundedSummary,
   privateMarketsUnfundedUsd,
   PRIVATE_MARKETS_CLASSES,
   unfundedUsd,
@@ -81,14 +82,20 @@ export default async function PensionProfilePage({
   // Unfunded budget = (target − actual) / 100 × AUM, capped at zero, summed
   // across private-markets asset classes. This is the cold-email headline.
   const headlineUnfunded = privateMarketsUnfundedUsd(latest);
-  const perClassUnfunded: Array<{ asset_class: string; unfunded_usd: number }> =
-    latest
-      .filter((r) =>
-        (PRIVATE_MARKETS_CLASSES as readonly string[]).includes(r.asset_class),
-      )
-      .map((r) => ({ asset_class: r.asset_class, unfunded_usd: unfundedUsd(r) }))
-      .filter((r) => r.unfunded_usd > 0)
-      .sort((a, b) => b.unfunded_usd - a.unfunded_usd);
+  const unfundedSummary = privateMarketsUnfundedSummary(latest);
+  // Per-class list for the hero chip strip + math modal. Non-zero gaps only;
+  // target-only rows (actuals missing) are surfaced via the summary's
+  // targetOnlyCount + the math modal, NOT as fake chips.
+  const perClassUnfunded: Array<{
+    asset_class: string;
+    unfunded_usd: number;
+    hasActuals?: boolean;
+  }> = unfundedSummary.perClass
+    .filter((r) => r.hasActuals && r.unfunded_usd > 0)
+    .sort((a, b) => b.unfunded_usd - a.unfunded_usd);
+  const targetOnlyAssetClasses = unfundedSummary.perClass
+    .filter((r) => !r.hasActuals)
+    .map((r) => r.asset_class);
 
   // Detected policy changes for this plan (most recent first).
   const { data: policyChanges } = await supabase
@@ -278,8 +285,23 @@ export default async function PensionProfilePage({
                   perClass={perClassUnfunded}
                   asOfDate={latestAsOf}
                   aumUsd={totalAum ?? plan.aum_usd}
+                  withActualsCount={unfundedSummary.withActualsCount}
+                  targetOnlyCount={unfundedSummary.targetOnlyCount}
                 />
               </div>
+              {unfundedSummary.targetOnlyCount > 0 ? (
+                <div
+                  className="mt-2 inline-flex items-center h-5 px-1.5 rounded-sm border border-amber-200 bg-amber-50 text-amber-800 text-[10.5px] font-medium cursor-help"
+                  title={`Target-only asset classes (no current actual in the latest CAFR, conservatively counted as \$0 gap): ${targetOnlyAssetClasses.join(", ")}. Actual allocation data unavailable from most recent CAFR.`}
+                >
+                  <span
+                    aria-hidden
+                    className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 mr-1"
+                  />
+                  Target-only for {unfundedSummary.targetOnlyCount} asset class
+                  {unfundedSummary.targetOnlyCount === 1 ? "" : "es"}
+                </div>
+              ) : null}
               <div
                 className="text-[11px] text-ink-faint mt-1 flex items-center justify-end gap-1 cursor-help"
                 title="Pensions typically publish CAFRs 6-12 months after fiscal year-end. This is the most recent publicly available."

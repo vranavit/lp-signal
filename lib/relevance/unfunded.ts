@@ -48,3 +48,51 @@ export function privateMarketsUnfundedUsd(rows: AllocationLike[]): number {
     )
     .reduce((acc, r) => acc + unfundedUsd(r), 0);
 }
+
+/**
+ * Richer version used by UI surfaces that need to communicate which rows
+ * actually contributed to the total vs. which were silently zero'd for
+ * missing `actual_pct`. See audit finding H-1 (2026-04-23): 25/74
+ * allocation rows had NULL `actual_pct` and contributed $0 to the
+ * headline, making it a low-side estimate.
+ */
+export type UnfundedSummary = {
+  totalUsd: number;
+  withActualsCount: number;
+  targetOnlyCount: number;
+  perClass: Array<{
+    asset_class: string;
+    unfunded_usd: number;
+    hasActuals: boolean;
+  }>;
+};
+
+export function privateMarketsUnfundedSummary(
+  rows: AllocationLike[],
+): UnfundedSummary {
+  const pm = rows.filter((r) =>
+    (PRIVATE_MARKETS_CLASSES as readonly string[]).includes(r.asset_class),
+  );
+  let total = 0;
+  let withActuals = 0;
+  let targetOnly = 0;
+  const perClass: UnfundedSummary["perClass"] = [];
+  for (const r of pm) {
+    const hasActuals = r.actual_pct != null;
+    if (hasActuals) withActuals++;
+    else targetOnly++;
+    const usd = unfundedUsd(r);
+    total += usd;
+    perClass.push({
+      asset_class: r.asset_class,
+      unfunded_usd: usd,
+      hasActuals,
+    });
+  }
+  return {
+    totalUsd: total,
+    withActualsCount: withActuals,
+    targetOnlyCount: targetOnly,
+    perClass,
+  };
+}

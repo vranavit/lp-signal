@@ -107,16 +107,28 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
       total_plan_aum_usd: number | null;
       as_of_date: string;
     }>;
+    const PM = new Set(["PE", "Infra", "Credit", "RE", "VC"]);
     const byPlan = new Map<string, typeof rows>();
     for (const r of rows) {
       if (!byPlan.has(r.plan_id)) byPlan.set(r.plan_id, []);
       byPlan.get(r.plan_id)!.push(r);
     }
     let unfundedTotal = 0;
+    let pensionsWithActuals = 0;
+    let pensionsTargetOnly = 0;
     for (const list of byPlan.values()) {
       list.sort((a, b) => b.as_of_date.localeCompare(a.as_of_date));
       const latestDate = list[0].as_of_date;
       const latest = list.filter((r) => r.as_of_date === latestDate);
+      const pm = latest.filter((r) => PM.has(r.asset_class));
+      // Completeness: a plan is "with actuals" only if every PM row in its
+      // latest snapshot has actual_pct set. One NULL tips it to "target
+      // only" so the caption can't overstate coverage.
+      const anyActualMissing = pm.some((r) => r.actual_pct == null);
+      if (pm.length > 0) {
+        if (anyActualMissing) pensionsTargetOnly++;
+        else pensionsWithActuals++;
+      }
       for (const r of latest) {
         if (r.actual_pct == null || r.total_plan_aum_usd == null) continue;
         const gap = Number(r.target_pct) - Number(r.actual_pct);
@@ -128,12 +140,16 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
       unfundedTotal,
       signalsCount: signalsCount ?? 0,
       pensionsMonitored: byPlan.size,
+      pensionsWithActuals,
+      pensionsTargetOnly,
     };
   } catch {
     return {
       unfundedTotal: 25_900_000_000,
       signalsCount: 75,
       pensionsMonitored: 7,
+      pensionsWithActuals: 0,
+      pensionsTargetOnly: 0,
     };
   }
 }

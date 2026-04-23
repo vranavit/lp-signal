@@ -76,6 +76,23 @@ export function Hero({
                 label="Policy changes detected"
               />
             </dl>
+
+            {stats.pensionsWithActuals + stats.pensionsTargetOnly > 0 ? (
+              <p className="mt-4 text-[12px] italic text-neutral-500 leading-snug max-w-xl">
+                Based on {stats.pensionsWithActuals} pension
+                {stats.pensionsWithActuals === 1 ? "" : "s"} with complete
+                target + actual data.
+                {stats.pensionsTargetOnly > 0 ? (
+                  <>
+                    {" "}
+                    {stats.pensionsTargetOnly} additional pension
+                    {stats.pensionsTargetOnly === 1 ? "" : "s"} tracked with
+                    targets only — actuals unavailable from current CAFR, so
+                    those plans are conservatively counted as zero gap.
+                  </>
+                ) : null}
+              </p>
+            ) : null}
           </div>
 
           {/* RIGHT — Bloomberg-style live feed panel */}

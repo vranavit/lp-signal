@@ -93,6 +93,14 @@ The fix is continuous re-scraping — checking every tracked pension source on a
 - [ ] Verified existing scrapers are all stable (no silent breakages)
 - [ ] API spend model updated to reflect continuous ingestion cost
 
+### Fund fact sheet ingestion (Phase 4+)
+
+Current limitation: some pensions publish allocation **targets** in the CAFR but **actuals** only in quarterly fund fact sheets or investment performance reports. 3 of 6 pensions with allocation data are currently target-only at their latest snapshot (NYSCRF 2025-03-31, WSIB 2025-06-30, Wisconsin SWIB 2024-12-31; TRS Texas 2025-08-31 reports non-PM classes only). 25 of 74 `pension_allocations` rows have `actual_pct IS NULL` and silently contribute `$0` to the unfunded-budget total.
+
+Fix: per-plan ingestion of the most recent fund fact sheet / investment performance report to get current actuals. Estimated 1–2 hours per plan (one-off scraper each, similar to existing `scripts/scrape-cafr-*` but targeting the quarterly report URL).
+
+Priority: **high for any plan that becomes a customer demo focus**. Surface this on the landing page + pension profile today (Day 9.5 H-1 fix) — visitors see "Based on N pensions with complete data. M tracked with targets only" rather than a headline that reads as a full number.
+
 ## Explicitly deferred
 
 - Email digest functionality — nobody has requested it; existing crons are fine
