@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Wordmark } from "@/components/brand/wordmark";
 
 type NavItem = { href: string; label: string; shortcut?: string };
 
@@ -22,17 +23,9 @@ export function TopNav({
           <Link
             href="/signals"
             className="flex items-center gap-2 group cursor-pointer"
+            aria-label="Allocus"
           >
-            <span
-              aria-hidden
-              className="inline-block h-[14px] w-[14px] border border-accent bg-accent/10"
-            />
-            <span className="text-[13px] font-semibold tracking-tightish text-ink">
-              Allocus
-            </span>
-            <span className="mono text-[10px] uppercase tracking-widestish text-ink-faint">
-              /LP Signal
-            </span>
+            <Wordmark size="sm" />
           </Link>
           <nav className="flex items-center gap-0.5">
             {items.map((i) => {

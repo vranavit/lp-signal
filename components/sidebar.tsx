@@ -5,6 +5,7 @@ import {
   Send,
   Settings as SettingsIcon,
 } from "lucide-react";
+import { Wordmark } from "@/components/brand/wordmark";
 
 type NavItem = {
   href: string;
@@ -35,14 +36,10 @@ export function Sidebar({
   return (
     <aside className="fixed top-0 left-0 bottom-0 w-[200px] border-r border-line bg-bg-subtle flex flex-col z-30">
       {/* Wordmark */}
-      <div className="h-14 px-4 flex items-center gap-2 border-b border-line">
-        <span
-          aria-hidden
-          className="inline-block h-[14px] w-[14px] border border-accent bg-accent/10"
-        />
-        <span className="text-[14px] font-semibold tracking-tightish text-ink">
-          Allocus
-        </span>
+      <div className="h-14 px-4 flex items-center border-b border-line">
+        <Link href="/" aria-label="Allocus home">
+          <Wordmark size="sm" />
+        </Link>
       </div>
 
       {/* Nav items */}

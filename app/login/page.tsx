@@ -1,6 +1,7 @@
 import { sendMagicLink } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Wordmark } from "@/components/brand/wordmark";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -17,14 +18,8 @@ export default function LoginPage({
   return (
     <main className="min-h-screen flex items-center justify-center bg-bg px-6">
       <div className="w-full max-w-sm">
-        <div className="mb-8 flex items-center gap-2">
-          <span
-            aria-hidden
-            className="inline-block h-[14px] w-[14px] border border-accent bg-accent/10"
-          />
-          <span className="text-[14px] font-semibold tracking-tightish text-ink">
-            Allocus
-          </span>
+        <div className="mb-8 flex justify-center">
+          <Wordmark size="sm" />
         </div>
 
         <div className="card-surface p-6">
