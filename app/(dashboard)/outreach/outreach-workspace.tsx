@@ -9,6 +9,7 @@ import { daysAgo, formatUSD } from "@/lib/utils";
 import { CombinationFilter } from "@/components/filters/combination-filter";
 import { useUrlFilterState } from "@/components/filters/use-url-filter-state";
 import { tierFor } from "@/components/filters/filter-state";
+import { SavedViewsMenu } from "@/components/filters/saved-views-menu";
 import type { SignalWithPlan } from "@/lib/types";
 
 export type OutreachRow = SignalWithPlan & {
@@ -307,16 +308,23 @@ export function OutreachWorkspace({
         geographyOptions={geographyOptions}
         resultCount={filtered.length}
         rightSlot={
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={exportCsv}
-            disabled={filtered.length === 0}
-          >
-            <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
-            Export CSV
-          </Button>
+          <>
+            <SavedViewsMenu
+              page="outreach"
+              state={state}
+              onApply={setState}
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={exportCsv}
+              disabled={filtered.length === 0}
+            >
+              <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
+              Export CSV
+            </Button>
+          </>
         }
       />
 

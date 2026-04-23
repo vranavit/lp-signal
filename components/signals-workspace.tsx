@@ -6,6 +6,7 @@ import { SignalDetailPanel } from "@/components/signal-detail-panel";
 import { CombinationFilter } from "@/components/filters/combination-filter";
 import { useUrlFilterState } from "@/components/filters/use-url-filter-state";
 import { tierFor } from "@/components/filters/filter-state";
+import { SavedViewsMenu } from "@/components/filters/saved-views-menu";
 import type { SignalWithPlan } from "@/lib/types";
 
 export type SignalWithDoc = SignalWithPlan & {
@@ -133,6 +134,9 @@ export function SignalsWorkspace({ rows }: { rows: SignalWithDoc[] }) {
         geographyOptions={geographyOptions}
         planOptions={planOptions}
         resultCount={filtered.length}
+        rightSlot={
+          <SavedViewsMenu page="signals" state={state} onApply={setState} />
+        }
       />
       <div className="flex gap-3 items-stretch">
         <div className="flex-1 min-w-0">
