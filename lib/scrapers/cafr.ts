@@ -36,6 +36,85 @@ export type CafrIngestResult = {
   documentId?: string;
 };
 
+/**
+ * Size above which Supabase Storage rejects the upload (project
+ * file_size_limit, currently 50 MB on this project). CAFRs larger
+ * than this bypass storage entirely and are classified inline via
+ * `ingestOversizedCafrFromBytes` — they live in Anthropic's Files
+ * API only for the duration of the classifier call.
+ */
+export const SUPABASE_STORAGE_CAP_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Download a PDF from a URL. Exposed so callers building an oversized-
+ * CAFR pipeline can fetch bytes directly without going through
+ * `ingestCafr`'s storage upload.
+ */
+export async function downloadPdfBytes(
+  url: string,
+): Promise<{ bytes: Uint8Array; hash: string; contentType: string }> {
+  const res = await fetchWithDefaults(url);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText} fetching ${url}`);
+  }
+  const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+  if (!contentType.includes("pdf")) {
+    throw new Error(`non-pdf content-type: ${contentType}`);
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  return { bytes, hash, contentType };
+}
+
+/**
+ * Insert a CAFR documents row without writing to Supabase Storage.
+ * Used for PDFs above SUPABASE_STORAGE_CAP_BYTES — the bytes get
+ * classified inline via the Files API and are not persisted locally.
+ * `storage_path` is set to a sentinel so the classifier's storage-
+ * download step would fail obviously if anything re-triggers it
+ * (only `classifyCafrFromBytes` should be reached from this path).
+ */
+export async function insertOversizedCafrRow(
+  supabase: SupabaseClient,
+  args: {
+    planId: string;
+    url: string;
+    fiscalYearEnd: string;
+    hash: string;
+  },
+): Promise<{ documentId: string; alreadyExisted: boolean }> {
+  const { data: existing } = await supabase
+    .from("documents")
+    .select("id")
+    .eq("plan_id", args.planId)
+    .eq("content_hash", args.hash)
+    .maybeSingle();
+  if (existing) {
+    return { documentId: existing.id, alreadyExisted: true };
+  }
+  const { data: inserted, error } = await supabase
+    .from("documents")
+    .insert({
+      plan_id: args.planId,
+      document_type: "cafr",
+      source_url: args.url,
+      content_hash: args.hash,
+      // Null storage_path signals "oversized — classify via Files API
+      // inline only; never re-download". The classifier's standard
+      // CAFR path asserts storage_path is non-null precisely to avoid
+      // silently returning zero on a re-run.
+      storage_path: null,
+      processing_status: "pending",
+      meeting_date: args.fiscalYearEnd,
+    })
+    .select("id")
+    .single();
+  if (error || !inserted) {
+    throw new Error(`oversized_cafr_insert_failed: ${error?.message ?? "no row"}`);
+  }
+  return { documentId: inserted.id, alreadyExisted: false };
+}
+
 export async function ingestCafr(
   supabase: SupabaseClient,
   args: CafrIngestArgs,

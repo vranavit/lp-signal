@@ -3,9 +3,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   CLASSIFIER_MODEL,
   extractSignalsFromPdf,
+  extractSignalsFromPdfFile,
   extractSignalsFromText,
   extractSignalsFromAgendaExcerpt,
   extractAllocationsFromCafrPdf,
+  extractAllocationsFromCafrPdfFile,
   extractAllocationsFromCafrText,
   type ExtractResult,
 } from "./extract";
@@ -13,6 +15,11 @@ import {
   extractCommitmentPages,
   extractPdfTextFallback,
 } from "./extract-commitment-pages";
+import {
+  FILES_API_THRESHOLD_BYTES,
+  uploadPdfToFilesApi,
+  deleteFileFromFilesApi,
+} from "./files-api";
 import { PROMPT_VERSION } from "./prompt";
 import { GP_PROMPT_VERSION } from "./prompts/gp-press-release";
 import { CAFR_PROMPT_VERSION } from "./prompts/cafr-allocation";
@@ -360,14 +367,24 @@ export async function classifyDocument(
           };
         }
 
-        const pdfBase64 = Buffer.from(bytes).toString("base64");
-
-        extract = await extractSignalsFromPdf({
-          pdfBase64,
-          planName: (plan as { name: string }).name,
-          meetingDate: doc.meeting_date,
-        });
         pageCount = parsedPageCount;
+
+        if (bytes.length > FILES_API_THRESHOLD_BYTES) {
+          extract = await classifyPdfViaFilesApi(bytes, documentId, async (fileId) =>
+            extractSignalsFromPdfFile({
+              fileId,
+              planName: (plan as { name: string }).name,
+              meetingDate: doc.meeting_date,
+            }),
+          );
+        } else {
+          const pdfBase64 = Buffer.from(bytes).toString("base64");
+          extract = await extractSignalsFromPdf({
+            pdfBase64,
+            planName: (plan as { name: string }).name,
+            meetingDate: doc.meeting_date,
+          });
+        }
       }
     }
 
@@ -572,13 +589,22 @@ async function classifyCafr(
     throw new Error(`storage download failed: ${dlErr?.message ?? "no blob"}`);
   }
   const bytes = new Uint8Array(await blob.arrayBuffer());
+  return classifyCafrFromBytes(supabase, doc, plan, bytes);
+}
 
-  // Mirrors the non-CAFR pdf-lib → unpdf fallback added yesterday. pdf-lib
-  // rejects a surprising set of legitimately-published CAFRs (PA PSERS
-  // FY2025, Michigan MPSERS FY2024, MA PRIM FY2025, Minnesota SBI FY2025
-  // in the 2026-04 batch). When it fails with a recoverable parse error
-  // we retry via unpdf (pdfjs) and send the extracted text to the CAFR
-  // classifier instead of the base64 PDF.
+/**
+ * Public entry for CAFR classification when the PDF bytes are already
+ * in memory (oversized ingest path that bypasses Supabase storage
+ * because the file exceeds the 50 MB project cap — Colorado PERA
+ * FY2024 ACFR is 84 MB). Same logic as classifyCafr post-download:
+ * pdf-lib → unpdf fallback → base64 vs Files API based on size.
+ */
+export async function classifyCafrFromBytes(
+  supabase: SupabaseClient,
+  doc: CafrDoc,
+  plan: { id: string; name: string; tier: number | null },
+  bytes: Uint8Array,
+): Promise<ClassifyOutcome> {
   let pageCount = 0;
   let pdfLibFailure: Error | null = null;
   try {
@@ -595,9 +621,58 @@ async function classifyCafr(
     throw new Error(`cafr_pdf_parse_failed: ${pdfLibFailure.message}`);
   }
 
+  // Route by size first — oversized PDFs go through Anthropic's Files
+  // API regardless of whether pdf-lib parsed the cross-reference
+  // structure, because Anthropic's server-side PDF parser preserves
+  // table layout better than unpdf's text extraction (critical for
+  // allocation-policy tables). Only if Files API fails do we fall
+  // back to unpdf text.
   let extract: Awaited<ReturnType<typeof extractAllocationsFromCafrPdf>>;
 
-  if (pdfLibFailure) {
+  if (bytes.length > FILES_API_THRESHOLD_BYTES) {
+    if (!pdfLibFailure && pageCount > CAFR_MAX_PAGES) {
+      await markDocError(
+        supabase,
+        doc.id,
+        `too_long: ${pageCount} pages (max ${CAFR_MAX_PAGES})`,
+      );
+      return { ...zeroOutcome(doc.id, "too_long"), pages: pageCount };
+    }
+    try {
+      extract = await classifyPdfViaFilesApi(bytes, doc.id, async (fileId) =>
+        extractAllocationsFromCafrPdfFile({
+          fileId,
+          planName: plan.name,
+          fiscalYearEnd: doc.meeting_date,
+        }),
+      );
+    } catch (filesErr) {
+      const msg = filesErr instanceof Error ? filesErr.message : String(filesErr);
+      console.warn(
+        `[classifier/cafr] Files API path failed for ${doc.id} (${msg.slice(0, 80)}) — trying unpdf text fallback`,
+      );
+      // Last-resort text extraction. Page layout is lost but better
+      // than silently failing on a file that Anthropic rejected.
+      const fallback = await extractPdfTextFallback(bytes, {
+        maxPagesAll: CAFR_MAX_PAGES,
+      });
+      pageCount = fallback.totalPages;
+      if (fallback.pages.length === 0 || fallback.totalPages > CAFR_MAX_PAGES) {
+        throw new Error(
+          `cafr_oversized_fallback_failed: files_api=${msg.slice(0, 60)}; unpdf_pages=${fallback.pages.length}/${fallback.totalPages}`,
+        );
+      }
+      extract = await extractAllocationsFromCafrText({
+        excerptText: fallback.extractedText,
+        planName: plan.name,
+        fiscalYearEnd: doc.meeting_date,
+        totalPages: fallback.totalPages,
+      });
+    }
+  } else if (pdfLibFailure) {
+    // Small but malformed — pdf-lib rejected, base64 inline path would
+    // also likely fail Anthropic's server parser on the same structure.
+    // Fall to unpdf text extraction (works for every PDF we've seen).
     console.log(
       `[classifier/cafr] pdf-lib failed for ${doc.id}, falling back to unpdf (${pdfLibFailure.message.slice(0, 60)})`,
     );
@@ -640,7 +715,6 @@ async function classifyCafr(
       );
       return { ...zeroOutcome(doc.id, "too_long"), pages: pageCount };
     }
-
     const pdfBase64 = Buffer.from(bytes).toString("base64");
     extract = await extractAllocationsFromCafrPdf({
       pdfBase64,
@@ -745,6 +819,39 @@ async function classifyCafr(
     pages: pageCount,
     confidences: response.allocations.map((a) => a.confidence),
   };
+}
+
+/**
+ * Upload a PDF to Anthropic's Files API, run a classifier callback
+ * against its file_id, and delete the file (best-effort, even on
+ * classification failure) so we don't leak storage. Used whenever a
+ * PDF exceeds the 24 MB inline-base64 threshold.
+ */
+async function classifyPdfViaFilesApi<T>(
+  bytes: Uint8Array,
+  documentId: string,
+  run: (fileId: string) => Promise<T>,
+): Promise<T> {
+  const filename = `document-${documentId}.pdf`;
+  const uploaded = await uploadPdfToFilesApi(bytes, filename);
+  console.log(
+    `[classifier/files-api] uploaded ${filename} size=${(uploaded.sizeBytes / 1024 / 1024).toFixed(2)}MB file_id=${uploaded.fileId} upload_ms=${uploaded.uploadMs}`,
+  );
+  try {
+    const result = await run(uploaded.fileId);
+    return result;
+  } finally {
+    try {
+      const del = await deleteFileFromFilesApi(uploaded.fileId);
+      console.log(
+        `[classifier/files-api] deleted file_id=${uploaded.fileId} delete_ms=${del.deleteMs}`,
+      );
+    } catch (delErr) {
+      console.warn(
+        `[classifier/files-api] delete FAILED file_id=${uploaded.fileId}: ${delErr instanceof Error ? delErr.message : String(delErr)}`,
+      );
+    }
+  }
 }
 
 /**

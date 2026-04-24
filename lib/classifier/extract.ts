@@ -12,6 +12,7 @@ import {
   recordAllocationsToolSchema,
   type CafrAllocationResponse,
 } from "./schemas/cafr-allocation";
+import { FILES_API_BETA } from "./files-api";
 
 export const CLASSIFIER_MODEL = "claude-sonnet-4-6";
 
@@ -30,25 +31,53 @@ export type ExtractResult = {
 // shaped.
 async function callClassifier(
   promptText: string,
-  docBlock: Anthropic.Messages.ContentBlockParam,
+  // Intentionally loose: the Files-API content block shape (source.type
+  // = "file") is only part of the beta messages types, not the stable
+  // Messages types. Cast happens at the call site.
+  docBlock: unknown,
+  opts: { useFilesApi?: boolean } = {},
 ): Promise<ExtractResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("missing ANTHROPIC_API_KEY");
 
   const client = new Anthropic({ apiKey });
 
-  const message = await client.messages.create({
-    model: CLASSIFIER_MODEL,
-    max_tokens: 4096,
-    tools: [recordSignalsToolSchema],
-    tool_choice: { type: "tool", name: "record_signals" },
-    messages: [
-      {
-        role: "user",
-        content: [docBlock, { type: "text", text: promptText }],
-      },
-    ],
-  });
+  // When the document content block references a file_id (Files API
+  // beta), route through client.beta.messages.create with the beta
+  // header. Otherwise use the stable messages endpoint. Both return
+  // the same response shape.
+  const message = opts.useFilesApi
+    ? await client.beta.messages.create({
+        model: CLASSIFIER_MODEL,
+        max_tokens: 4096,
+        tools: [recordSignalsToolSchema],
+        tool_choice: { type: "tool", name: "record_signals" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              docBlock as Anthropic.Beta.Messages.BetaContentBlockParam,
+              { type: "text", text: promptText },
+            ],
+          },
+        ],
+        betas: [FILES_API_BETA],
+      })
+    : await client.messages.create({
+        model: CLASSIFIER_MODEL,
+        max_tokens: 4096,
+        tools: [recordSignalsToolSchema],
+        tool_choice: { type: "tool", name: "record_signals" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              docBlock as Anthropic.Messages.ContentBlockParam,
+              { type: "text", text: promptText },
+            ],
+          },
+        ],
+      });
 
   const toolUse = message.content.find(
     (b): b is Extract<typeof b, { type: "tool_use" }> => b.type === "tool_use",
@@ -91,25 +120,46 @@ export type CafrExtractResult = {
 // a CAFR can legitimately produce 10+ allocation rows plus an AUM figure.
 async function callCafrClassifier(
   promptText: string,
-  docBlock: Anthropic.Messages.ContentBlockParam,
+  docBlock: unknown,
+  opts: { useFilesApi?: boolean } = {},
 ): Promise<CafrExtractResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("missing ANTHROPIC_API_KEY");
 
   const client = new Anthropic({ apiKey });
 
-  const message = await client.messages.create({
-    model: CLASSIFIER_MODEL,
-    max_tokens: 8192,
-    tools: [recordAllocationsToolSchema],
-    tool_choice: { type: "tool", name: "record_allocations" },
-    messages: [
-      {
-        role: "user",
-        content: [docBlock, { type: "text", text: promptText }],
-      },
-    ],
-  });
+  const message = opts.useFilesApi
+    ? await client.beta.messages.create({
+        model: CLASSIFIER_MODEL,
+        max_tokens: 8192,
+        tools: [recordAllocationsToolSchema],
+        tool_choice: { type: "tool", name: "record_allocations" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              docBlock as Anthropic.Beta.Messages.BetaContentBlockParam,
+              { type: "text", text: promptText },
+            ],
+          },
+        ],
+        betas: [FILES_API_BETA],
+      })
+    : await client.messages.create({
+        model: CLASSIFIER_MODEL,
+        max_tokens: 8192,
+        tools: [recordAllocationsToolSchema],
+        tool_choice: { type: "tool", name: "record_allocations" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              docBlock as Anthropic.Messages.ContentBlockParam,
+              { type: "text", text: promptText },
+            ],
+          },
+        ],
+      });
 
   const toolUse = message.content.find(
     (b): b is Extract<typeof b, { type: "tool_use" }> => b.type === "tool_use",
@@ -157,6 +207,38 @@ export async function extractAllocationsFromCafrPdf(
       data: args.pdfBase64,
     },
   });
+}
+
+export type ExtractCafrFileArgs = {
+  fileId: string;
+  planName: string;
+  fiscalYearEnd: string | null;
+};
+
+/**
+ * CAFR classifier entry that references a Files API `file_id` instead
+ * of inlining the PDF as base64. Used for oversized ACFRs (Colorado
+ * PERA FY2024 at 84 MB, NYSTRS FY2025 at 47.8 MB). Same prompt,
+ * same tool, same response shape as `extractAllocationsFromCafrPdf`.
+ */
+export async function extractAllocationsFromCafrPdfFile(
+  args: ExtractCafrFileArgs,
+): Promise<CafrExtractResult> {
+  const prompt = buildCafrAllocationPrompt({
+    planName: args.planName,
+    fiscalYearEnd: args.fiscalYearEnd,
+  });
+  return callCafrClassifier(
+    prompt,
+    {
+      type: "document",
+      source: {
+        type: "file",
+        file_id: args.fileId,
+      },
+    },
+    { useFilesApi: true },
+  );
 }
 
 export type ExtractCafrTextArgs = {
@@ -216,6 +298,38 @@ export async function extractSignalsFromPdf(
       data: args.pdfBase64,
     },
   });
+}
+
+export type ExtractFromPdfFileArgs = {
+  fileId: string;
+  planName: string;
+  meetingDate: string | null;
+};
+
+/**
+ * Pension-signal classifier entry that references a Files API
+ * `file_id` instead of inlining the PDF as base64. Used for PDFs too
+ * large to fit inside the 32 MB inline request ceiling. Same prompt,
+ * same tool, same response shape as `extractSignalsFromPdf`.
+ */
+export async function extractSignalsFromPdfFile(
+  args: ExtractFromPdfFileArgs,
+): Promise<ExtractResult> {
+  const prompt = buildClassifierPrompt({
+    planName: args.planName,
+    meetingDate: args.meetingDate,
+  });
+  return callClassifier(
+    prompt,
+    {
+      type: "document",
+      source: {
+        type: "file",
+        file_id: args.fileId,
+      },
+    },
+    { useFilesApi: true },
+  );
 }
 
 export type ExtractFromTextArgs = {
