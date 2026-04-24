@@ -205,6 +205,19 @@ Deferred:
 
 Migrations + first-run commands pending manual apply — see the "User finish-line commands" block in session summary.
 
+### Task C+ follow-up — Colorado PERA ingestion repaired (2026-04-24)
+
+Initial Task C+ runner defaulted to the FY2022 ACFR (7.1 MB, within the Anthropic 32 MB base64 ceiling) but the classifier failed with `cafr_pdf_parse_failed: Expected instance of PDFDict, but got instance of undefined` — pdf-lib rejects the cross-reference structure even with `throwOnInvalidObject: false`. A probe over all nine PERA candidate PDFs (full ACFRs FY2022–FY2024, PAFRs FY2023–FY2024, PERAPlus DC annuals) found exactly one that pdf-lib parses cleanly: the **FY2023 Popular Annual Financial Report** (4.0 MB, 16 pages).
+
+- `[SHA]` — **fix(cafr): colorado pera ingestion using FY2023 PAFR**. DEFAULT_URL and DEFAULT_FISCAL_YEAR_END swapped from the FY2022 ACFR to the FY2023 PAFR. Stale error document removed; new document inserted and classified: **6 allocation rows, all accepted (confidence 0.90–0.93), 39K tokens, 1 API call**. Coverage: Cash / Fixed Income / Other (Alternatives) / PE / Public Equity / RE with both target and actual %, AUM $61.5B, as-of 2023-12-31.
+
+Coverage impact:
+
+- `pension_allocations` rows: 81 → **87**
+- Colorado PERA remains in the **allocation-only** bucket (no board-minutes source → no signals), alongside TRS Texas, Wisconsin SWIB, TRS Illinois. The original Task C+ claim of "5 → 6 thorough" was incorrect — PERA cannot become "thorough" as defined (signals ∩ allocations) until PERA publishes board minutes. Thorough count stays at **5** (CalSTRS, CalPERS, NYSCRF, WSIB, Oregon PERS).
+
+The FY2024 full ACFR (84 MB) and FY2023 full ACFR (60 MB) remain deferred pending Files-API classifier migration — both exceed the 32 MB base64 ceiling.
+
 ### Fund fact sheet ingestion (Phase 4+)
 
 Current limitation: some pensions publish allocation **targets** in the CAFR but **actuals** only in quarterly fund fact sheets or investment performance reports. 3 of 6 pensions with allocation data are currently target-only at their latest snapshot (NYSCRF 2025-03-31, WSIB 2025-06-30, Wisconsin SWIB 2024-12-31; TRS Texas 2025-08-31 reports non-PM classes only). 25 of 74 `pension_allocations` rows have `actual_pct IS NULL` and silently contribute `$0` to the unfunded-budget total.

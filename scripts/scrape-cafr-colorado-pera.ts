@@ -1,20 +1,33 @@
 /**
- * Day 10 Task C+ Component 2: Colorado PERA CAFR ingestion.
+ * Day 10 Task C+ Component 2: Colorado PERA allocation-report ingestion.
  *
  * Colorado PERA does not publish board-meeting minutes, so it is a
- * CAFR-only plan. This is a one-off runner (no cron — CAFRs publish
- * annually and re-ingesting each year is a scheduled task for future
+ * CAFR-only plan. This is a one-off runner (no cron — annual reports
+ * publish yearly; re-ingesting each year is a scheduled task for future
  * sessions or for the /api/cron/scrape-cafr weekly heartbeat when per-
  * plan URL discovery is wired).
  *
  * Source: https://content.copera.org/wp-content/uploads/YYYY/MM/*.pdf
  *
- * Size blocker note. PERA's FY2024 ACFR (published 2025-06) is 84 MB,
- * which exceeds Anthropic's 32 MB base64 request ceiling. The FY2023
- * ACFR is 60 MB — also too large. The FY2022 ACFR is 7.1 MB and is the
- * largest that fits the current ingestion path, so we default to it.
- * Once the classifier migrates to the Anthropic Files API, swap
- * DEFAULT_URL to the FY2024 link and update FISCAL_YEAR_END.
+ * PDF-compatibility blocker. The PERA full ACFRs (FY2022–FY2024) and
+ * the FY2024 PAFR/PERAPlus reports all fail pdf-lib's
+ * PDFDocument.load() with `Expected instance of PDFDict, but got
+ * instance of undefined` even with `throwOnInvalidObject: false` — the
+ * library rejects the pdf cross-reference structure before the
+ * classifier can send the file to Anthropic. A live probe over nine
+ * candidate PDFs (see `probe-pera.ts` in git history) found one that
+ * parses cleanly: the FY2023 Popular Annual Financial Report (4.0 MB,
+ * 16 pages). It covers the fiscal year ended 2023-12-31 and includes
+ * a summary asset-allocation breakdown.
+ *
+ * Why not the larger ACFR? FY2024 ACFR is 84 MB (exceeds Anthropic's
+ * 32 MB base64 ceiling); FY2023 ACFR is 60 MB (same); FY2022 ACFR is
+ * 7.1 MB but pdf-lib can't parse it. The FY2023 PAFR is the
+ * recent-and-parseable intersection.
+ *
+ * Once the classifier migrates to the Anthropic Files API (which
+ * bypasses pdf-lib validation and the 32 MB ceiling), swap DEFAULT_URL
+ * to the FY2024 full ACFR for full target + actual coverage.
  *
  * Usage:
  *   pnpm tsx --env-file=.env.local scripts/scrape-cafr-colorado-pera.ts
@@ -25,8 +38,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ingestCafr } from "@/lib/scrapers/cafr";
 
 const DEFAULT_URL =
-  "https://content.copera.org/wp-content/uploads/2024/07/pera-annual-comprehensive-financial-report-2022.pdf";
-const DEFAULT_FISCAL_YEAR_END = "2022-12-31";
+  "https://content.copera.org/wp-content/uploads/2024/07/popular-annual-financial-report-2023.pdf";
+const DEFAULT_FISCAL_YEAR_END = "2023-12-31";
 
 function parseArgs() {
   let url = DEFAULT_URL;
