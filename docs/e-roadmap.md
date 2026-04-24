@@ -155,6 +155,33 @@ Post-Session 2 pension coverage: **15 plans** (13 existing + 2 new). Plans with 
 
 **Session 2 verification closed out (2026-04-24)** with `eb1995a` diagnostic + `81b08b3` landing counter fix (pensionsMonitored now unions signals ∪ allocations → 12; hardcoded fallback replaced with null → `—`) + stale-diagnostic-script repair (six `scripts/check-*.ts` / `list-*.ts` files corrected schema references + added explicit error logging).
 
+### Day 10 Session 3 — shipped (2026-04-23 late)
+
+Target: 3 more pension scrapers following the Session 2 pattern, no new Vercel cron entries. All three investigated candidates cleared — the fallback list (Colorado PERA, Minnesota SBI) was not needed.
+
+Commits (stacked on Session 2 + Phase A):
+
+- `536753d` — **feat(scrapers): add Virginia Retirement System pension scraper + seed migration**. VRS publishes Board of Trustees + Investment Advisory Committee agendas, materials, and approved minutes to `/media/members/pdf/board/{agendas,materials,minutes}/YYYY/*.pdf` under filenames that encode the meeting date. The single server-rendered index at `/about/board/meetings/` surfaces every PDF for the last ~12 months — live parse yields 75 candidates (29 agendas + 29 materials + 17 minutes), 0 unmatched dates. AUM seeded at $114B.
+- `2c787a1` — **feat(scrapers): add NJ Division of Investment pension scraper + seed migration**. The State Investment Council ratifies commitment decisions for the NJ Pension Fund (~$100B across TPAF/PERS/PFRS/SPRS/JRS) and publishes approved minutes to `/treasury/doinvest/pdf/ApprovedMinutes/YYYY/*.pdf`. Filenames span five generations of naming conventions (2008 → 2025); the parser handles each pattern and falls back to the `/YYYY/` path segment when filename parsing fails. Live parse yields 142 historical candidates spanning 2008–2025, 0 unmatched dates.
+- `c6a1e78` — **feat(scrapers): add LACERA pension scraper + seed migration**. LA County ERA (~$84B) publishes Board of Investments agendas and minutes to `/sites/default/files/assets/documents/board/YYYY/BOI/YYYY-MM-DD-boi_{agnd,min}.pdf`. The index pages surface only the current ~10 PDFs — older years are hidden behind a JS-filtered Drupal view — so the scraper runs a hybrid of index harvesting + date-candidate probe over the last 18 months (every 2nd-Tues and 2nd-Wed of each month × agnd/min variants). Verified 7 of 10 probed 2024/2025 URLs resolve. Benign 404s absorbed into the `notFound` counter so the health-check cron doesn't alert.
+
+All three scrapers fan out from the existing `/api/cron/scrape-pension-wave-2` endpoint — no new Vercel cron entry, total stays at **15**. Admin `/admin/ingestion` `bucketFor()` updated to recognize the three new source keys. `pnpm build` passes clean.
+
+Migrations + first-run scrapes pending manual apply:
+
+```
+set -a; source .env.local; set +a
+pnpm tsx scripts/apply-migration.ts supabase/migrations/20260501000006_seed_vrs.sql
+pnpm tsx scripts/apply-migration.ts supabase/migrations/20260501000007_seed_nj_doi.sql
+pnpm tsx scripts/apply-migration.ts supabase/migrations/20260501000008_seed_lacera.sql
+pnpm tsx scripts/scrape-vrs.ts --max-pdfs=30
+pnpm tsx scripts/scrape-nj-doi.ts --max-pdfs=30
+pnpm tsx scripts/scrape-lacera.ts --months-back=18
+pnpm tsx scripts/classify-pending.ts
+```
+
+Post-Session 3 pension coverage: **18 plans** (15 existing + 3 new). Target signal-coverage after first ingest + classify: 12+ productive plans.
+
 ### Fund fact sheet ingestion (Phase 4+)
 
 Current limitation: some pensions publish allocation **targets** in the CAFR but **actuals** only in quarterly fund fact sheets or investment performance reports. 3 of 6 pensions with allocation data are currently target-only at their latest snapshot (NYSCRF 2025-03-31, WSIB 2025-06-30, Wisconsin SWIB 2024-12-31; TRS Texas 2025-08-31 reports non-PM classes only). 25 of 74 `pension_allocations` rows have `actual_pct IS NULL` and silently contribute `$0` to the unfunded-budget total.

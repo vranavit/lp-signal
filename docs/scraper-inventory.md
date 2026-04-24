@@ -17,6 +17,9 @@ Established 2026-04-23 (Day 10 Session 1) during the continuous-ingestion build.
 | `wsib` | `lib/scrapers/wsib.ts` | Board meeting packets (PDF) | `sib.wa.gov/docs/meetings/...` | daily check (monthly meetings) | `/api/cron/scrape-wsib` | `30 17 * * *` | PMC PDFs |
 | `oregon_pers` | `lib/scrapers/oregon.ts` | Board meeting packets + minutes (PDF) | `oregon.gov/treasury/invested-for-oregon/.../YYYY/*.pdf` | daily check (8 meetings/yr) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | Oregon Investment Council; index-page scrape, 85 historical candidates |
 | `ma_prim` | `lib/scrapers/ma-prim.ts` | Board meeting packets + minutes (PDF) | `mapension.com/wp-content/uploads/YYYY/MM/Board-Meeting-*.pdf` | daily check (4 meetings/yr) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | PRIM; candidate-URL probe pattern, upload-month window ±3 around meeting date |
+| `vrs` | `lib/scrapers/vrs.ts` | Board agendas + materials + minutes (PDF) | `varetire.org/media/members/pdf/board/{agendas,materials,minutes}/YYYY/*.pdf` | daily check (~monthly meetings) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | Virginia Retirement System; index-page scrape, 75 candidates live (29 agendas + 29 materials + 17 minutes) |
+| `nj_doi` | `lib/scrapers/nj-doi.ts` | Approved board minutes (PDF) | `nj.gov/treasury/doinvest/pdf/ApprovedMinutes/YYYY/*.pdf` | daily check (~monthly meetings) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | NJ State Investment Council; index-page scrape, 142 historical candidates spanning 2008–2025 |
+| `lacera` | `lib/scrapers/lacera.ts` | Board agendas + minutes (PDF) | `lacera.gov/sites/default/files/assets/documents/board/YYYY/BOI/YYYY-MM-DD-boi_{agnd,min}.pdf` | daily check (~monthly meetings) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | LA County ERA; hybrid index (~10 current-year) + date-candidate probe (2nd Tues/Wed × 18 months) for older-year coverage |
 | `cafr-*` | `scripts/scrape-cafr-*.ts` | Annual CAFR / ACFR | various | weekly check (annual publish, 6-12 mo lag) | `/api/cron/scrape-cafr` | `0 18 * * 1` | One consolidated weekly cron fans out to each `scrape-cafr-*` target |
 
 ## Supporting infrastructure
@@ -28,7 +31,7 @@ Established 2026-04-23 (Day 10 Session 1) during the continuous-ingestion build.
 | `/api/cron/policy-change-alert` | `0 15 * * *` | Daily digest of target-allocation moves |
 | `/api/cron/scraper-health-check` | `0 19 * * *` | Alerts when a source hasn't been checked in 2× its expected cadence |
 
-Total cron count: **15** (11 scraping + 1 Session-2 fan-out + classify + 2 alerts + health-check). Right at the Vercel 15-cron hard stop. New pension sources (Session 3+) register themselves into the `scrape-pension-wave-2` fan-out instead of getting their own Vercel cron entry.
+Total cron count: **15** (11 scraping + 1 wave-2 fan-out + classify + 2 alerts + health-check). Right at the Vercel 15-cron hard stop. Session 3 added VRS, NJ DOI, and LACERA into the `scrape-pension-wave-2` fan-out — which now holds 5 sub-scrapers (Oregon, PRIM, VRS, NJ DOI, LACERA) behind the single Vercel cron entry. New pension sources register themselves here instead of getting their own cron.
 
 ## Deliberately skipped
 
