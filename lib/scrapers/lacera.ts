@@ -168,7 +168,7 @@ export async function scrapeLacera(
 
       const { error: insErr } = await supabase.from("documents").insert({
         plan_id: opts.planId,
-        document_type: "board_minutes",
+        document_type: laceraDocumentType(cand.url),
         source_url: cand.url,
         content_hash: hash,
         storage_path: storagePath,
@@ -192,6 +192,30 @@ export async function scrapeLacera(
     .eq("id", opts.planId);
 
   return result;
+}
+
+/**
+ * Classify a LACERA PDF URL into the corresponding documents.document_type
+ * value. Shared between the live scraper insert and the backfill script.
+ *
+ *   x_agnd.pdf, /.../...agenda....pdf  → agenda_packet  (BOI meeting book)
+ *   x_min.pdf, /.../...minutes....pdf  → board_minutes  (approved minutes)
+ *   BOI_x_report-out.pdf / xreportoutx → board_approvals (summary doc)
+ *   fallback                           → board_minutes  (back-compat default)
+ *
+ * Routing note. `agenda_packet` is the only type that the classifier
+ * runs through the keyword-page extractor today — see
+ * lib/classifier/index.ts. board_minutes and board_approvals stay on
+ * the full-PDF path because they're short (<=50 pages typically).
+ */
+export function laceraDocumentType(
+  url: string,
+): "agenda_packet" | "board_minutes" | "board_approvals" {
+  const path = decodeURIComponent(url).toLowerCase();
+  if (/report[-_]?out/.test(path)) return "board_approvals";
+  if (/_min\.pdf(?:$|\?)|\bminutes\b/.test(path)) return "board_minutes";
+  if (/_agnd\.pdf(?:$|\?)|\bagenda\b/.test(path)) return "agenda_packet";
+  return "board_minutes";
 }
 
 /**
