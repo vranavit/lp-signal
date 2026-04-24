@@ -44,7 +44,8 @@ function bucketFor(key: string): SourceBucket {
     key === "ma_prim" ||
     key === "vrs" ||
     key === "nj_doi" ||
-    key === "lacera"
+    key === "lacera" ||
+    key === "minnesota_sbi"
   )
     return "pension_board";
   return "other";
