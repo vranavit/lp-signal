@@ -58,10 +58,15 @@ const allocationSchema = z.object({
   // policy targets inside a class (not when it lists implementation
   // sub-strategies like Buyout/Growth/Secondaries within PE).
   sub_class: z.string().min(1).max(120).nullable().optional(),
-  target_pct: z.number().min(0).max(100),
-  target_min_pct: z.number().min(0).max(100).nullable().optional(),
-  target_max_pct: z.number().min(0).max(100).nullable().optional(),
-  actual_pct: z.number().min(0).max(100).nullable().optional(),
+  // Allocation percentages can legitimately be negative — e.g. VRS
+  // FY2025 reports a cash / leverage offset row that nets against
+  // positive exposures elsewhere (the classifier emits target_pct /
+  // actual_pct = negative for those). Bound at -100 so we still reject
+  // obviously-broken extractions.
+  target_pct: z.number().min(-100).max(100),
+  target_min_pct: z.number().min(-100).max(100).nullable().optional(),
+  target_max_pct: z.number().min(-100).max(100).nullable().optional(),
+  actual_pct: z.number().min(-100).max(100).nullable().optional(),
   actual_usd: coercedInt.nullable().optional(),
   source_page: z.number().int().min(1),
   source_quote: z.string().min(1),
@@ -103,29 +108,29 @@ export const recordAllocationsToolSchema: Tool = {
             },
             target_pct: {
               type: "number",
-              minimum: 0,
+              minimum: -100,
               maximum: 100,
               description:
-                "Target allocation percentage (0-100). If only a range is given, use the midpoint.",
+                "Target allocation percentage (typically 0-100; may be negative for cash/leverage offset rows that net against positive exposures). If only a range is given, use the midpoint.",
             },
             target_min_pct: {
               type: "number",
-              minimum: 0,
+              minimum: -100,
               maximum: 100,
               description: "Policy range minimum, if stated. null otherwise.",
             },
             target_max_pct: {
               type: "number",
-              minimum: 0,
+              minimum: -100,
               maximum: 100,
               description: "Policy range maximum, if stated. null otherwise.",
             },
             actual_pct: {
               type: "number",
-              minimum: 0,
+              minimum: -100,
               maximum: 100,
               description:
-                "Actual allocation as of the fiscal year end, if shown alongside the target.",
+                "Actual allocation as of the fiscal year end, if shown alongside the target. Negative values are valid for cash/leverage offset rows.",
             },
             actual_usd: {
               type: "integer",
