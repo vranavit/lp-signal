@@ -205,6 +205,62 @@ Deferred:
 
 Migrations + first-run commands pending manual apply — see the "User finish-line commands" block in session summary.
 
+### Signal-only → thorough CAFR batch (2026-04-24)
+
+Goal: move the 8 signal-only pension plans into the thorough bucket by ingesting their most recent allocation-bearing annual reports. After the user runs these 8 scripts, thorough plan count should move from **5 → 11-13** depending on allocation yield.
+
+Investigation matrix — all 8 accessible, sized for the Anthropic 32 MB inline base64 ceiling:
+
+| Plan | URL | FY end | Size | Doc kind |
+|---|---|---|---|---|
+| PA PSERS | pa.gov/.../psers%20acfr%20fy2025.pdf | 2025-06-30 | 1.9 MB | Full ACFR |
+| Michigan SMRS | audgen.michigan.gov/.../MPSERS-ACFR.pdf | 2024-09-30 | 1.3 MB | Full ACFR (MPSERS) |
+| NYSTRS | nystrs.org/getmedia/.../PAFR.pdf | 2025-06-30 | 4.3 MB | Popular (full ACFR too large) |
+| MA PRIM | mapension.com/.../PRIT-ACFR-06302025.pdf | 2025-06-30 | 2.9 MB | Full ACFR |
+| VRS | varetire.org/.../2025-annual-report.pdf | 2025-06-30 | 3.2 MB | Full ACFR |
+| NJ DOI | nj.gov/.../AnnualReportforFiscalYear2024.pdf | 2024-06-30 | 0.8 MB | SIC Annual Report |
+| LACERA | lacera.gov/.../ACFR-2025.pdf | 2025-06-30 | 12.8 MB | Full ACFR |
+| Minnesota SBI | msbi.us/.../2025%20MSBI%20Annual%20Report.pdf | 2025-06-30 | 3.9 MB | Annual Report |
+
+Notes:
+- **NYSTRS** is the only plan where the most recent full ACFR can't fit: FY2025 ACFR 47.8 MB, FY2024 ACFR 27.4 MB (base64-expanded to ~36.5 MB, over the 32 MB inline ceiling). Defaults to the two-year PAFR (4.3 MB) — swap to the FY2025 ACFR URL once the classifier migrates to the Anthropic Files API. Both URLs are documented in the script.
+- **Michigan SMRS** uses the MPSERS ACFR (the largest plan in the State of Michigan Retirement Systems pool) pulled from audgen.michigan.gov because www.michigan.gov blocks non-browser clients via Akamai. The audgen host serves the same audited document.
+- **NJ DOI** publishes an SIC Annual Report rather than a GFOA-style ACFR; it still includes target + actual allocations for the State Investment Council-managed pool.
+
+Commits (stacked on the unpdf-fallback chain):
+
+- `4919c06` — feat(cafr): add PA PSERS CAFR ingestion script
+- `7f51909` — feat(cafr): add Michigan SMRS CAFR ingestion script
+- `ccab597` — feat(cafr): add NYSTRS PAFR ingestion script
+- `ccb03d2` — feat(cafr): add Massachusetts PRIM CAFR ingestion script
+- `331c030` — feat(cafr): add Virginia Retirement System CAFR ingestion script
+- `1d278fb` — feat(cafr): add NJ Division of Investment annual-report ingestion script
+- `fb68b60` — feat(cafr): add LACERA CAFR ingestion script
+- `2e778f4` — feat(cafr): add Minnesota SBI annual-report ingestion script
+
+Each script follows the Oregon pattern (import `ingestCafr`, hardcoded DEFAULT_URL + DEFAULT_FISCAL_YEAR_END, `--url` + `--fiscal-year-end` override flags). The unpdf fallback landed earlier this session covers any PDFs pdf-lib rejects automatically.
+
+User finish-line commands (run in Terminal):
+
+```
+cd ~/Desktop/lp-signal
+set -a; source .env.local; set +a
+
+pnpm tsx scripts/scrape-cafr-psers.ts
+pnpm tsx scripts/scrape-cafr-michigan-smrs.ts
+pnpm tsx scripts/scrape-cafr-nystrs.ts
+pnpm tsx scripts/scrape-cafr-ma-prim.ts
+pnpm tsx scripts/scrape-cafr-vrs.ts
+pnpm tsx scripts/scrape-cafr-nj-doi.ts
+pnpm tsx scripts/scrape-cafr-lacera.ts
+pnpm tsx scripts/scrape-cafr-minnesota-sbi.ts
+
+pnpm tsx scripts/classify-pending.ts
+pnpm tsx scripts/db-sanity.ts
+
+git push origin main
+```
+
 ### Minnesota SBI malformed-PDF recovery via unpdf fallback (2026-04-24)
 
 9 Minnesota SBI meeting books sat in `processing_status='error'` with
