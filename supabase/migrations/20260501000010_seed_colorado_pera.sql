@@ -24,7 +24,7 @@ values (
   64000000000,
   1,
   true,
-  'cafr',
+  'annual_report',
   'https://content.copera.org/wp-content/uploads/2025/06/Annual-Comprehensive-Financial-Report.pdf',
   jsonb_build_object(
     'key', 'colorado_pera',
