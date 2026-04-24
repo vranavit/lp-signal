@@ -204,3 +204,39 @@ export async function extractSignalsFromText(
     text: `<press_release>\n${args.text}\n</press_release>`,
   });
 }
+
+export type ExtractFromAgendaExcerptArgs = {
+  excerptText: string;
+  planName: string;
+  meetingDate: string | null;
+  retainedPages: number[];
+  totalPages: number;
+};
+
+/**
+ * Classifier entry for agenda-packet documents that have been page-filtered
+ * by `extract-commitment-pages`. Uses the standard pension prompt but feeds
+ * a text block (rather than a base64 PDF) so long packets don't have to
+ * fit inside the 300-page cap. The wrapping tag + header make it obvious
+ * to the model which content is untrusted and provide a provenance hint
+ * that not every page from the source doc is shown.
+ */
+export async function extractSignalsFromAgendaExcerpt(
+  args: ExtractFromAgendaExcerptArgs,
+): Promise<ExtractResult> {
+  const prompt = buildClassifierPrompt({
+    planName: args.planName,
+    meetingDate: args.meetingDate,
+  });
+  const header =
+    `This excerpt was extracted from a multi-hundred-page Board of Investments ` +
+    `agenda packet. Only pages that matched commitment-vote keywords (motion, ` +
+    `seconded, unanimously approved, commitment of $, etc.) and their immediate ` +
+    `neighbors are included. Retained pages: ${args.retainedPages.join(", ")} ` +
+    `(of ${args.totalPages} total). Use the per-page "=== Page N ===" markers as ` +
+    `the source_page value when emitting signals.`;
+  return callClassifier(prompt, {
+    type: "text",
+    text: `<agenda_packet_excerpt>\n${header}\n\n${args.excerptText}\n</agenda_packet_excerpt>`,
+  });
+}

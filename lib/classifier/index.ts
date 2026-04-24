@@ -4,9 +4,11 @@ import {
   CLASSIFIER_MODEL,
   extractSignalsFromPdf,
   extractSignalsFromText,
+  extractSignalsFromAgendaExcerpt,
   extractAllocationsFromCafrPdf,
   type ExtractResult,
 } from "./extract";
+import { extractCommitmentPages } from "./extract-commitment-pages";
 import { PROMPT_VERSION } from "./prompt";
 import { GP_PROMPT_VERSION } from "./prompts/gp-press-release";
 import { CAFR_PROMPT_VERSION } from "./prompts/cafr-allocation";
@@ -218,6 +220,13 @@ export async function classifyDocument(
 
       const bytes = new Uint8Array(await blob.arrayBuffer());
 
+      // Agenda packets (LACERA today) are typically 400-750 pages and
+      // don't fit the 300-page full-PDF path. We route them through the
+      // keyword-page extractor before the MAX_PAGES gate so the few
+      // pages that actually contain commitment votes can still surface
+      // signals. See lib/classifier/extract-commitment-pages.ts.
+      const isAgendaPacket = doc.document_type === "agenda_packet";
+
       let parsedPageCount = 0;
       try {
         const pdf = await PDFDocument.load(bytes, {
@@ -231,37 +240,71 @@ export async function classifyDocument(
         );
       }
 
-      if (parsedPageCount > MAX_PAGES) {
-        await supabase
-          .from("documents")
-          .update({
-            processing_status: "error",
-            error_message: `too_long: ${parsedPageCount} pages (max ${MAX_PAGES})`,
-            processed_at: new Date().toISOString(),
-          })
-          .eq("id", documentId);
-        return {
-          documentId,
-          ok: false,
-          reason: "too_long",
-          signalsExtracted: 0,
-          signalsInserted: 0,
-          signalsAccepted: 0,
-          signalsPreliminary: 0,
-          signalsRejected: 0,
-          tokensUsed: 0,
-          pages: parsedPageCount,
-        };
+      if (isAgendaPacket) {
+        const extracted = await extractCommitmentPages(bytes);
+        pageCount = extracted.totalPages;
+        if (extracted.pages.length === 0) {
+          await supabase
+            .from("documents")
+            .update({
+              processing_status: "complete",
+              error_message: `no_commitment_content_in_agenda: ${extracted.totalPages} pages scanned, 0 above threshold`,
+              processed_at: new Date().toISOString(),
+            })
+            .eq("id", documentId);
+          return {
+            documentId,
+            ok: false,
+            reason: "no_commitment_content_in_agenda",
+            signalsExtracted: 0,
+            signalsInserted: 0,
+            signalsAccepted: 0,
+            signalsPreliminary: 0,
+            signalsRejected: 0,
+            tokensUsed: 0,
+            pages: extracted.totalPages,
+          };
+        }
+        extract = await extractSignalsFromAgendaExcerpt({
+          excerptText: extracted.extractedText,
+          planName: (plan as { name: string }).name,
+          meetingDate: doc.meeting_date,
+          retainedPages: extracted.pages,
+          totalPages: extracted.totalPages,
+        });
+      } else {
+        if (parsedPageCount > MAX_PAGES) {
+          await supabase
+            .from("documents")
+            .update({
+              processing_status: "error",
+              error_message: `too_long: ${parsedPageCount} pages (max ${MAX_PAGES})`,
+              processed_at: new Date().toISOString(),
+            })
+            .eq("id", documentId);
+          return {
+            documentId,
+            ok: false,
+            reason: "too_long",
+            signalsExtracted: 0,
+            signalsInserted: 0,
+            signalsAccepted: 0,
+            signalsPreliminary: 0,
+            signalsRejected: 0,
+            tokensUsed: 0,
+            pages: parsedPageCount,
+          };
+        }
+
+        const pdfBase64 = Buffer.from(bytes).toString("base64");
+
+        extract = await extractSignalsFromPdf({
+          pdfBase64,
+          planName: (plan as { name: string }).name,
+          meetingDate: doc.meeting_date,
+        });
+        pageCount = parsedPageCount;
       }
-
-      const pdfBase64 = Buffer.from(bytes).toString("base64");
-
-      extract = await extractSignalsFromPdf({
-        pdfBase64,
-        planName: (plan as { name: string }).name,
-        meetingDate: doc.meeting_date,
-      });
-      pageCount = parsedPageCount;
     }
 
     const { response, tokensUsed } = extract;
