@@ -2,32 +2,22 @@
  * Day 10 Task C+ Component 2: Colorado PERA allocation-report ingestion.
  *
  * Colorado PERA does not publish board-meeting minutes, so it is a
- * CAFR-only plan. This is a one-off runner (no cron — annual reports
- * publish yearly; re-ingesting each year is a scheduled task for future
- * sessions or for the /api/cron/scrape-cafr weekly heartbeat when per-
- * plan URL discovery is wired).
+ * CAFR-only plan. One-off runner — annual reports publish yearly.
  *
  * Source: https://content.copera.org/wp-content/uploads/YYYY/MM/*.pdf
  *
- * PDF-compatibility blocker. The PERA full ACFRs (FY2022–FY2024) and
- * the FY2024 PAFR/PERAPlus reports all fail pdf-lib's
- * PDFDocument.load() with `Expected instance of PDFDict, but got
- * instance of undefined` even with `throwOnInvalidObject: false` — the
- * library rejects the pdf cross-reference structure before the
- * classifier can send the file to Anthropic. A live probe over nine
- * candidate PDFs (see `probe-pera.ts` in git history) found one that
- * parses cleanly: the FY2023 Popular Annual Financial Report (4.0 MB,
- * 16 pages). It covers the fiscal year ended 2023-12-31 and includes
- * a summary asset-allocation breakdown.
+ * Default now points at the FY2024 full ACFR (84 MB). The classifier's
+ * Files-API fallback (lib/classifier/files-api.ts) uploads the PDF to
+ * Anthropic's file store and classifies via file_id instead of inlining
+ * base64 — bypassing the 32 MB inline request ceiling entirely. pdf-lib
+ * still rejects the PERA ACFR's cross-reference structure, but we don't
+ * need pdf-lib on the Files-API path because Anthropic parses the PDF
+ * server-side with its own parser.
  *
- * Why not the larger ACFR? FY2024 ACFR is 84 MB (exceeds Anthropic's
- * 32 MB base64 ceiling); FY2023 ACFR is 60 MB (same); FY2022 ACFR is
- * 7.1 MB but pdf-lib can't parse it. The FY2023 PAFR is the
- * recent-and-parseable intersection.
- *
- * Once the classifier migrates to the Anthropic Files API (which
- * bypasses pdf-lib validation and the 32 MB ceiling), swap DEFAULT_URL
- * to the FY2024 full ACFR for full target + actual coverage.
+ * Prior default was the FY2023 PAFR (4.0 MB, 16 pages) — chosen when
+ * pdf-lib + base64 was the only path and every full PERA ACFR blew up.
+ * Keep the PAFR URL handy as an emergency override (see --url flag) in
+ * case the Files-API path has an outage.
  *
  * Usage:
  *   pnpm tsx --env-file=.env.local scripts/scrape-cafr-colorado-pera.ts
@@ -35,11 +25,17 @@
  */
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { ingestCafr } from "@/lib/scrapers/cafr";
+import {
+  ingestCafr,
+  downloadPdfBytes,
+  insertOversizedCafrRow,
+  SUPABASE_STORAGE_CAP_BYTES,
+} from "@/lib/scrapers/cafr";
+import { classifyCafrFromBytes } from "@/lib/classifier";
 
 const DEFAULT_URL =
-  "https://content.copera.org/wp-content/uploads/2024/07/popular-annual-financial-report-2023.pdf";
-const DEFAULT_FISCAL_YEAR_END = "2023-12-31";
+  "https://content.copera.org/wp-content/uploads/2025/06/Annual-Comprehensive-Financial-Report.pdf";
+const DEFAULT_FISCAL_YEAR_END = "2024-12-31";
 
 function parseArgs() {
   let url = DEFAULT_URL;
@@ -58,7 +54,7 @@ async function main() {
 
   const { data: plan, error } = await supabase
     .from("plans")
-    .select("id, name")
+    .select("id, name, tier")
     .eq("scrape_config->>key", "colorado_pera")
     .single();
   if (error || !plan) {
@@ -71,17 +67,62 @@ async function main() {
   console.log(`URL:  ${url}`);
   console.log(`FYE:  ${fiscalYearEnd}`);
 
-  const r = await ingestCafr(supabase, {
-    planId: plan.id,
-    planKey: "colorado-pera",
-    url,
-    fiscalYearEnd,
-  });
+  // PERA FY2024 ACFR is 84 MB — exceeds the 50 MB Supabase storage
+  // project cap on this project. Probe size first and choose between
+  // the standard ingestCafr path (≤50 MB) and the oversized-bypass path
+  // (download → insert doc row with null storage_path → classify
+  // inline via Files API). This keeps the regular runner behavior for
+  // smaller URL overrides (FY2023 PAFR, etc.).
+  const probe = await downloadPdfBytes(url);
+  console.log(
+    `downloaded ${(probe.bytes.length / 1024 / 1024).toFixed(2)}MB (hash=${probe.hash.slice(0, 12)})`,
+  );
+
+  if (probe.bytes.length <= SUPABASE_STORAGE_CAP_BYTES) {
+    const r = await ingestCafr(supabase, {
+      planId: plan.id,
+      planKey: "colorado-pera",
+      url,
+      fiscalYearEnd,
+    });
+    console.log(
+      `\nfetched=${r.fetched} inserted=${r.inserted} skipped=${r.skipped} bytes=${(r.bytes / 1024 / 1024).toFixed(2)}MB${r.error ? " error=" + r.error : ""}`,
+    );
+    if (r.documentId) console.log(`documentId=${r.documentId}`);
+    return;
+  }
 
   console.log(
-    `\nfetched=${r.fetched} inserted=${r.inserted} skipped=${r.skipped} bytes=${(r.bytes / 1024 / 1024).toFixed(2)}MB${r.error ? " error=" + r.error : ""}`,
+    `\nPDF exceeds Supabase storage cap (${(SUPABASE_STORAGE_CAP_BYTES / 1024 / 1024).toFixed(0)}MB) — using oversized bypass (Files API inline).`,
   );
-  if (r.documentId) console.log(`documentId=${r.documentId}`);
+  const { documentId, alreadyExisted } = await insertOversizedCafrRow(supabase, {
+    planId: plan.id,
+    url,
+    fiscalYearEnd,
+    hash: probe.hash,
+  });
+  console.log(
+    `documentId=${documentId}${alreadyExisted ? " (already existed — reclassifying)" : " (new row)"}`,
+  );
+  // Make sure the row is pending so classifyCafrFromBytes will process it.
+  await supabase
+    .from("documents")
+    .update({ processing_status: "processing", error_message: null, processed_at: null })
+    .eq("id", documentId);
+
+  const outcome = await classifyCafrFromBytes(
+    supabase,
+    {
+      id: documentId,
+      plan_id: plan.id,
+      storage_path: null,
+      meeting_date: fiscalYearEnd,
+      source_url: url,
+    },
+    { id: plan.id, name: plan.name, tier: plan.tier },
+    probe.bytes,
+  );
+  console.log(`\nclassify outcome: ${JSON.stringify(outcome, null, 2)}`);
 }
 
 main().catch((e) => {
