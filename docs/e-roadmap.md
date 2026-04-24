@@ -205,6 +205,42 @@ Deferred:
 
 Migrations + first-run commands pending manual apply — see the "User finish-line commands" block in session summary.
 
+### Minnesota SBI malformed-PDF recovery via unpdf fallback (2026-04-24)
+
+9 Minnesota SBI meeting books sat in `processing_status='error'` with
+`pdf_parse_failed: Expected instance of PDFDict, but got instance of undefined`
+— pdf-lib rejected the cross-reference structure on every file. Standalone
+probe confirmed unpdf (pdfjs) parses all 9 cleanly (3 to 506 pages, 6 KB to
+652 KB extracted text).
+
+Commits (stacked on LACERA pipeline):
+
+- `a0d9718` — **feat(classifier): add unpdf fallback for malformed PDFs**. When pdf-lib throws a recoverable parse error (PDFDict / Invalid object / xref / Expected instance of / No PDF header), the classifier retries with unpdf via `extractPdfTextFallback` and routes the text through the existing agenda-excerpt path. Under MAX_PAGES: send every page (preserves full content). Over MAX_PAGES: apply keyword filter. If unpdf also fails, error becomes `pdf_parse_failed_both` so triage sees both parser messages.
+- `[SHA]` — **fix(minnesota-sbi): reprocess pdf_parse_failed documents with unpdf fallback**. New `scripts/reprocess-pdf-parse-failed.ts` (scope: `--scrape-key=...` defaulting to `minnesota_sbi`, or `--all`). Ran on MSBI → **61 new accepted signals** across 9 docs, 0 still_failing, 0 no_content.
+
+Outcome per doc:
+
+| pages | path            | signals | notes |
+|------:|-----------------|--------:|-------|
+|     3 | all-pages       |       4 | Feb 2024 Minutes |
+|    71 | all-pages       |       0 | Affirmative Action Plan (governance, no commitments) |
+|   294 | all-pages       |       3 | Aug 2023 |
+|   298 | all-pages       |       9 | Feb 2024 Meeting Book |
+|   308 | keyword-filter  |       8 | Nov 2023 |
+|   314 | keyword-filter  |      10 | Dec 2024 |
+|   330 | keyword-filter  |       8 | May 2024 |
+|   340 | keyword-filter  |       5 | May 2023 |
+|   506 | keyword-filter  |      14 | Oct 2025 |
+
+Coverage impact:
+
+- Validated signals: **423 → 484** (+61)
+- MSBI documents complete: 19 → **28** (of 30)
+- MSBI signal count: **155** (was ~30)
+- MSBI docs still `error`: 2 (`too_long` 304 and 312 pages — page-cap rejections, not pdf_parse failures; deferred. These would recover if re-tagged as `agenda_packet`, but the task scoped this session to the pdf_parse_failed set.)
+
+Approx spend: ~416K tokens across 9 API calls, ~$2 (well under the $5-15 budget).
+
 ### LACERA agenda-packet extraction pipeline (2026-04-24)
 
 Goal: recover signals from the 13 LACERA BOI packets stuck with `too_long` / `request_too_large` errors. BOI books are 400-750 pages of which ~5-15 contain actual commitment-vote content; the rest is performance analytics + manager decks.
