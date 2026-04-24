@@ -205,6 +205,35 @@ Deferred:
 
 Migrations + first-run commands pending manual apply — see the "User finish-line commands" block in session summary.
 
+### LACERA agenda-packet extraction pipeline (2026-04-24)
+
+Goal: recover signals from the 13 LACERA BOI packets stuck with `too_long` / `request_too_large` errors. BOI books are 400-750 pages of which ~5-15 contain actual commitment-vote content; the rest is performance analytics + manager decks.
+
+Commits (stacked on Task C+):
+
+- `8237630` — **feat(schema): add agenda_packet + board_approvals document types, backfill LACERA tagging**. Migration `20260501000011` extends `documents.document_type` CHECK to allow `agenda_packet`, `board_approvals`, `performance_report`. `lib/scrapers/lacera.ts` now classifies the URL at insert via the exported `laceraDocumentType()`. `scripts/backfill-lacera-document-types.ts` re-tagged all 34 existing LACERA rows: **23 agenda_packet + 2 board_approvals + 9 board_minutes**.
+- `bc4cffc` — **feat(classifier): extract commitment pages for agenda packets**. New `lib/classifier/extract-commitment-pages.ts` uses `unpdf` (pdfjs wrapper) to score each page against weighted keyword lists and keeps scoring pages plus ±1 context page. Classifier route (`lib/classifier/index.ts`) detects `document_type === 'agenda_packet'` before the MAX_PAGES gate and pipes the retained text through a new `extractSignalsFromAgendaExcerpt()`. Live probe across all 23 packets: 0 zero-page outcomes, 313 retained pages total (avg 14/packet).
+- `[SHA]` — **fix(lacera): reprocess too_long agenda packets via extraction pipeline**. New `scripts/reprocess-lacera-agenda-packets.ts` resets every `agenda_packet:error` LACERA row back to `pending` and re-runs `classifyDocument` on each.
+
+Retry outcome:
+
+- Packets processed: **13** (11 too_long + 2 request_too_large)
+- New accepted signals: **31** (+6 from the 746-page sample run, +25 from the remaining 12 packets)
+- Commitment range observed: $100M–$750M, across PE / RE / Credit / Infra
+- Tokens used: **~149K across 13 API calls → ~$0.80** (well under the $5-12 budget)
+- Zero-commitment returns: **0** of 13 — all packets had keyword hits even when some BOI packets returned 0 classifier signals (handful of packets were mostly performance-review content)
+
+Coverage impact:
+
+- Validated signals (plan-scoped): **392 → 423** (+31)
+- LACERA document status: 34 / 34 `complete` (was 21 / 34)
+- LACERA signal count: **61** (was 30)
+
+Deferred:
+
+- **Apply extraction to non-LACERA sources** — intentionally scoped to LACERA for now per Task rules. Oregon PERS + MA PRIM already covered Session-2 too_long docs via the Phase A cap raise (100 → 300). If future sources have 300+ page packets, extend their scraper to tag `agenda_packet` on insert and the rest of the pipeline picks them up automatically.
+- **Keyword-set tuning** — current list is LACERA-calibrated. If MSBI / VRS / NJ DOI packets ever exceed 300 pages, revisit keywords for their specific phrasing.
+
 ### Task C+ follow-up — Colorado PERA ingestion repaired (2026-04-24)
 
 Initial Task C+ runner defaulted to the FY2022 ACFR (7.1 MB, within the Anthropic 32 MB base64 ceiling) but the classifier failed with `cafr_pdf_parse_failed: Expected instance of PDFDict, but got instance of undefined` — pdf-lib rejects the cross-reference structure even with `throwOnInvalidObject: false`. A probe over all nine PERA candidate PDFs (full ACFRs FY2022–FY2024, PAFRs FY2023–FY2024, PERAPlus DC annuals) found exactly one that pdf-lib parses cleanly: the **FY2023 Popular Annual Financial Report** (4.0 MB, 16 pages).
