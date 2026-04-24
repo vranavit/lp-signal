@@ -159,6 +159,42 @@ export async function extractAllocationsFromCafrPdf(
   });
 }
 
+export type ExtractCafrTextArgs = {
+  excerptText: string;
+  planName: string;
+  fiscalYearEnd: string | null;
+  totalPages: number;
+};
+
+/**
+ * CAFR classifier entry for PDFs pdf-lib rejects as malformed (Minnesota
+ * SBI annual reports, several PSERS / MPSERS ACFRs observed in this
+ * batch). After unpdf extracts page-level text we send the full text to
+ * Anthropic wrapped in <cafr_text_excerpt> — the CAFR prompt works fine
+ * on text because the policy table is still discoverable even without
+ * the base64 PDF's layout. The wrapper header tells the model this is
+ * untrusted content and that "=== Page N ===" markers are the
+ * source_page values to emit.
+ */
+export async function extractAllocationsFromCafrText(
+  args: ExtractCafrTextArgs,
+): Promise<CafrExtractResult> {
+  const prompt = buildCafrAllocationPrompt({
+    planName: args.planName,
+    fiscalYearEnd: args.fiscalYearEnd,
+  });
+  const header =
+    `This text was extracted from a CAFR / Annual Report PDF that the ` +
+    `primary PDF parser could not open structurally. Page layout may be ` +
+    `imperfect but the asset-allocation policy table is still present. ` +
+    `Total pages in source: ${args.totalPages}. Use the "=== Page N ===" ` +
+    `markers as the source_page value when emitting allocations.`;
+  return callCafrClassifier(prompt, {
+    type: "text",
+    text: `<cafr_text_excerpt>\n${header}\n\n${args.excerptText}\n</cafr_text_excerpt>`,
+  });
+}
+
 export type ExtractFromPdfArgs = {
   pdfBase64: string;
   planName: string;

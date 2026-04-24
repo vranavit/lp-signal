@@ -6,6 +6,7 @@ import {
   extractSignalsFromText,
   extractSignalsFromAgendaExcerpt,
   extractAllocationsFromCafrPdf,
+  extractAllocationsFromCafrText,
   type ExtractResult,
 } from "./extract";
 import {
@@ -572,7 +573,14 @@ async function classifyCafr(
   }
   const bytes = new Uint8Array(await blob.arrayBuffer());
 
+  // Mirrors the non-CAFR pdf-lib → unpdf fallback added yesterday. pdf-lib
+  // rejects a surprising set of legitimately-published CAFRs (PA PSERS
+  // FY2025, Michigan MPSERS FY2024, MA PRIM FY2025, Minnesota SBI FY2025
+  // in the 2026-04 batch). When it fails with a recoverable parse error
+  // we retry via unpdf (pdfjs) and send the extracted text to the CAFR
+  // classifier instead of the base64 PDF.
   let pageCount = 0;
+  let pdfLibFailure: Error | null = null;
   try {
     const pdf = await PDFDocument.load(bytes, {
       ignoreEncryption: true,
@@ -580,26 +588,66 @@ async function classifyCafr(
     });
     pageCount = pdf.getPageCount();
   } catch (err) {
-    throw new Error(
-      `cafr_pdf_parse_failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    pdfLibFailure = err instanceof Error ? err : new Error(String(err));
   }
 
-  if (pageCount > CAFR_MAX_PAGES) {
-    await markDocError(
-      supabase,
-      doc.id,
-      `too_long: ${pageCount} pages (max ${CAFR_MAX_PAGES})`,
-    );
-    return { ...zeroOutcome(doc.id, "too_long"), pages: pageCount };
+  if (pdfLibFailure && !isPdfLibParseRecoverable(pdfLibFailure)) {
+    throw new Error(`cafr_pdf_parse_failed: ${pdfLibFailure.message}`);
   }
 
-  const pdfBase64 = Buffer.from(bytes).toString("base64");
-  const extract = await extractAllocationsFromCafrPdf({
-    pdfBase64,
-    planName: plan.name,
-    fiscalYearEnd: doc.meeting_date,
-  });
+  let extract: Awaited<ReturnType<typeof extractAllocationsFromCafrPdf>>;
+
+  if (pdfLibFailure) {
+    console.log(
+      `[classifier/cafr] pdf-lib failed for ${doc.id}, falling back to unpdf (${pdfLibFailure.message.slice(0, 60)})`,
+    );
+    let fallback: Awaited<ReturnType<typeof extractPdfTextFallback>>;
+    try {
+      fallback = await extractPdfTextFallback(bytes, {
+        maxPagesAll: CAFR_MAX_PAGES,
+      });
+    } catch (unpdfErr) {
+      const msg =
+        unpdfErr instanceof Error ? unpdfErr.message : String(unpdfErr);
+      throw new Error(
+        `cafr_pdf_parse_failed_both: pdf-lib=${pdfLibFailure.message.slice(0, 60)}; unpdf=${msg.slice(0, 60)}`,
+      );
+    }
+    pageCount = fallback.totalPages;
+    if (fallback.totalPages > CAFR_MAX_PAGES) {
+      await markDocError(
+        supabase,
+        doc.id,
+        `too_long: ${fallback.totalPages} pages (max ${CAFR_MAX_PAGES})`,
+      );
+      return { ...zeroOutcome(doc.id, "too_long"), pages: fallback.totalPages };
+    }
+    console.log(
+      `[classifier/cafr] unpdf fallback for ${doc.id}: totalPages=${fallback.totalPages} retained=${fallback.pages.length} keywordFilter=${fallback.usedKeywordFilter}`,
+    );
+    extract = await extractAllocationsFromCafrText({
+      excerptText: fallback.extractedText,
+      planName: plan.name,
+      fiscalYearEnd: doc.meeting_date,
+      totalPages: fallback.totalPages,
+    });
+  } else {
+    if (pageCount > CAFR_MAX_PAGES) {
+      await markDocError(
+        supabase,
+        doc.id,
+        `too_long: ${pageCount} pages (max ${CAFR_MAX_PAGES})`,
+      );
+      return { ...zeroOutcome(doc.id, "too_long"), pages: pageCount };
+    }
+
+    const pdfBase64 = Buffer.from(bytes).toString("base64");
+    extract = await extractAllocationsFromCafrPdf({
+      pdfBase64,
+      planName: plan.name,
+      fiscalYearEnd: doc.meeting_date,
+    });
+  }
   const { response, tokensUsed } = extract;
 
   const accepted: CafrAllocation[] = [];
@@ -615,7 +663,32 @@ async function classifyCafr(
     else preliminary.push(a);
   }
 
-  const toInsert = [...accepted, ...preliminary].map((a) => ({
+  // De-dup on (asset_class, coalesce(sub_class, '')) to match the
+  // pension_allocations unique index added in Day-9.5 H-2. The
+  // classifier occasionally emits the same asset class twice with a
+  // null sub_class — typically when the policy table appears in the
+  // Investment Section AND the Statistical Section. Keep the highest-
+  // confidence row per bucket and drop the rest (with a console note
+  // so drift-analysis has visibility).
+  const dedupMap = new Map<string, CafrAllocation>();
+  const dupDropped: CafrAllocation[] = [];
+  for (const a of [...accepted, ...preliminary]) {
+    const key = `${a.asset_class}::${a.sub_class ?? ""}`;
+    const existing = dedupMap.get(key);
+    if (!existing || a.confidence > existing.confidence) {
+      if (existing) dupDropped.push(existing);
+      dedupMap.set(key, a);
+    } else {
+      dupDropped.push(a);
+    }
+  }
+  if (dupDropped.length > 0) {
+    console.warn(
+      `[classifier/cafr] deduplicated ${dupDropped.length} duplicate allocations ` +
+        `(doc=${doc.id}): ${dupDropped.map((d) => `${d.asset_class}${d.sub_class ? "/" + d.sub_class : ""}@${d.confidence.toFixed(2)}`).join(", ")}`,
+    );
+  }
+  const toInsert = [...dedupMap.values()].map((a) => ({
     plan_id: plan.id,
     as_of_date: doc.meeting_date,
     asset_class: a.asset_class,
