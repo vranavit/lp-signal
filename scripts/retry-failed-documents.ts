@@ -65,13 +65,16 @@ function parseArgs() {
   const args = process.argv.slice(2);
   let errorType: Bucket = "storage_5xx";
   let dryRun = false;
+  const excludePlans: string[] = [];
   for (const a of args) {
     if (a === "--dry-run") dryRun = true;
     else if (a.startsWith("--error-type=")) {
       errorType = a.slice("--error-type=".length) as Bucket;
+    } else if (a.startsWith("--exclude-plan=")) {
+      excludePlans.push(a.slice("--exclude-plan=".length));
     }
   }
-  return { errorType, dryRun };
+  return { errorType, dryRun, excludePlans };
 }
 
 async function loadCandidates(
@@ -153,7 +156,7 @@ function today(): string {
 }
 
 async function main() {
-  const { errorType, dryRun } = parseArgs();
+  const { errorType, dryRun, excludePlans } = parseArgs();
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key =
@@ -168,9 +171,13 @@ async function main() {
   }
   const supabase = createClient(url, key);
 
-  const cands = await loadCandidates(supabase, errorType);
+  const loaded = await loadCandidates(supabase, errorType);
+  const cands = excludePlans.length === 0
+    ? loaded
+    : loaded.filter((c) => !excludePlans.some((p) => (c.plan ?? "") === p));
+  const excluded = loaded.length - cands.length;
   console.log(
-    `\ncandidates for bucket=${errorType}: ${cands.length}${dryRun ? " (dry run)" : ""}`,
+    `\ncandidates for bucket=${errorType}: ${cands.length}${excluded > 0 ? ` (excluded ${excluded} via --exclude-plan)` : ""}${dryRun ? " (dry run)" : ""}`,
   );
   for (const c of cands) {
     console.log(

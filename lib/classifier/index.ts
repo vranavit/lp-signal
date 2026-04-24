@@ -15,7 +15,15 @@ import type { ClassifiedSignal } from "./schema";
 import type { CafrAllocation } from "./schemas/cafr-allocation";
 
 const STORAGE_BUCKET = "documents";
-const MAX_PAGES = 100;
+// Board-packet PDFs (Oregon "Public Book", MA PRIM full minutes) routinely
+// run 100–250 pages. The prior 100-page cap excluded 17 Session-2 docs
+// despite the CAFR path already proving 300+ page PDFs work against
+// Anthropic (see CAFR_MAX_PAGES note below). 300 covers the full Session-2
+// range (max observed 252) with a ~140-page buffer below the CAFR-proven
+// ceiling. Anthropic will return a request-size / token-overflow error on
+// the rare doc that exceeds its per-call budget — those surface as
+// distinct error_message values, not silent truncation.
+const MAX_PAGES = 300;
 // CAFRs run 150–300 pages typically; NYSCRF's is 310 and CalPERS' Annual
 // Investment Report is 440. Allow up to 500 for document_type === 'cafr'.
 // The Anthropic 32 MB request limit is still the hard ceiling — documents
