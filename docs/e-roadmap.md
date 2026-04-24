@@ -205,6 +205,33 @@ Deferred:
 
 Migrations + first-run commands pending manual apply — see the "User finish-line commands" block in session summary.
 
+### Files API fallback for oversized CAFRs (2026-04-24)
+
+Unblocks CAFR ingestion for PDFs that exceed Anthropic's 32 MB inline base64 ceiling. Fallback — not replacement: base64 inline stays the default for normal-sized PDFs; only PDFs over 24 MB (raw) route through Anthropic's Files API (`anthropic-beta: files-api-2025-04-14`).
+
+Commits (stacked on the CAFR negative-pct fix):
+
+- `2dc1d09` — **feat(classifier): add Files API fallback for oversized PDFs**. New `lib/classifier/files-api.ts` wraps `client.beta.files.{upload,delete}`; new extract entries `extractSignalsFromPdfFile` / `extractAllocationsFromCafrPdfFile` send a `document` block with `source.type="file", file_id`. `classifyPdfViaFilesApi` wraps upload → run → delete in a try/finally so classification crashes don't leak storage. Oversized-PDF routing prefers Files API over the unpdf text fallback because Anthropic's server-side parser preserves table layout. Split `classifyCafr` into a storage-download prelude and an exported `classifyCafrFromBytes` entry so scrapers can classify bytes already in memory. New `lib/scrapers/cafr.ts` helpers: `downloadPdfBytes`, `insertOversizedCafrRow`, `SUPABASE_STORAGE_CAP_BYTES` — fills the hole where Supabase Storage caps at 50 MB (project-wide) even though Anthropic Files API accepts up to 500 MB.
+- `8031fb9` — **feat(cafr): switch Colorado PERA to FY2024 full ACFR via Files API**. 84 MB ACFR (both Anthropic- and Supabase-oversized) routes through the in-memory bypass: 6 allocations at 0.95-0.97 confidence as-of 2024-12-31, was 0.90-0.93 from the FY2023 PAFR.
+- `8534d9e` — **feat(cafr): switch NYSTRS to FY2025 full ACFR via Files API**. 47.8 MB ACFR fits Supabase storage but exceeds the Anthropic base64 ceiling — standard ingestCafr path + Files API classifier route. 11 allocations (same as PAFR) but with sub_class granularity (Domestic/International/Global Equity; Domestic FI/High-Yield/Global Bonds; Real Estate Debt vs Private Debt under Credit) the PAFR collapsed.
+
+Live timings:
+
+| PDF | Size | Upload | Classify | Delete | Allocations |
+|---|---:|---:|---:|---:|---:|
+| NYSTRS FY2025 ACFR | 47.8 MB | 2.8 s | 72 s | 781 ms | 11 @ 0.93-0.97 |
+| Colorado PERA FY2024 ACFR | 84.3 MB | 3.9 s | 29 s | 612 ms | 6 @ 0.95-0.97 |
+
+Coverage impact:
+
+- `pension_allocations` rows: **145 → 157** (+12)
+- Documents: **413 → 415** (+2 new CAFR rows)
+- Thorough plans: **12 → 13** (LACERA joined separately; Files API migration itself kept thorough count intact — these plans were already thorough via PAFR)
+
+Notes:
+- Files API is beta (no private access required — just pass the beta header). Uploads/downloads/deletes are free; content referenced in Messages is billed identically to the equivalent inline-PDF request (input tokens per page).
+- 50 MB Supabase project cap is the binding constraint for files 50 MB < size ≤ 500 MB. `insertOversizedCafrRow` writes a documents row with `storage_path = null` to signal "classify via Files API inline only; never re-download".
+
 ### CAFR batch recovery: unpdf fallback + negative-pct schema (2026-04-24)
 
 The 8-plan CAFR batch (see next section) hit two distinct failure
