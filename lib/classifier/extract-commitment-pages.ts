@@ -76,21 +76,59 @@ export type ExtractCommitmentPagesResult = {
 };
 
 /**
+ * Parse a PDF with unpdf (pdfjs) and return text per page. Shared by both
+ * the keyword-filter extractor and the malformed-PDF fallback.
+ */
+async function readPagesTextWithUnpdf(
+  pdfBuffer: Uint8Array,
+): Promise<{ totalPages: number; pagesText: string[] }> {
+  const pdf = await getDocumentProxy(pdfBuffer);
+  const totalPages = pdf.numPages;
+  const extracted = await extractText(pdf, { mergePages: false });
+  const pagesText: string[] = Array.isArray(extracted.text)
+    ? (extracted.text as string[])
+    : [extracted.text as string];
+  return { totalPages, pagesText };
+}
+
+/**
+ * Render a subset of page indexes into the `=== Page N ===` excerpt
+ * format the classifier consumes. Shared by both entry points so the
+ * layout stays identical.
+ */
+function renderExcerpt(pagesText: string[], retainedPages: number[]): string {
+  return retainedPages
+    .map((page) => {
+      const raw = pagesText[page - 1] ?? "";
+      const cleaned = raw.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+      return `=== Page ${page} ===\n${cleaned}`;
+    })
+    .join("\n\n");
+}
+
+/**
  * Extract pages likely to contain commitment-vote content from a PDF.
  * Does not throw on unextractable pages — they score 0 and drop out.
  */
 export async function extractCommitmentPages(
   pdfBuffer: Uint8Array,
 ): Promise<ExtractCommitmentPagesResult> {
-  const pdf = await getDocumentProxy(pdfBuffer);
-  const totalPages = pdf.numPages;
-  // unpdf's extractText returns text per page when mergePages is false.
-  // It accepts the proxy directly to avoid re-parsing.
-  const extracted = await extractText(pdf, { mergePages: false });
-  const pagesText: string[] = Array.isArray(extracted.text)
-    ? (extracted.text as string[])
-    : [extracted.text as string];
+  const { totalPages, pagesText } = await readPagesTextWithUnpdf(pdfBuffer);
+  return keywordFilterPages(pagesText, totalPages);
+}
 
+/**
+ * Score + filter pages against the keyword lists. Split out of
+ * `extractCommitmentPages` so the fallback helper can reuse an
+ * already-parsed pagesText array without re-loading the PDF (pdfjs
+ * detaches the typed-array buffer after the first getDocumentProxy,
+ * so calling readPagesTextWithUnpdf twice on the same bytes throws
+ * "Cannot transfer object of unsupported type").
+ */
+function keywordFilterPages(
+  pagesText: string[],
+  totalPages: number,
+): ExtractCommitmentPagesResult {
   const pageScores: Array<{ page: number; score: number; matched: string[] }> = [];
   for (let i = 0; i < pagesText.length; i++) {
     const text = pagesText[i] ?? "";
@@ -136,21 +174,53 @@ export async function extractCommitmentPages(
     };
   });
 
-  const extractedText = retainedPages
-    .map((page) => {
-      const raw = pagesText[page - 1] ?? "";
-      // Collapse runs of whitespace so the prompt doesn't spend tokens
-      // on unpdf's generous newline splits while keeping paragraph-ish
-      // breaks.
-      const cleaned = raw.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
-      return `=== Page ${page} ===\n${cleaned}`;
-    })
-    .join("\n\n");
-
   return {
     pages: retainedPages,
     totalPages,
-    extractedText,
+    extractedText: renderExcerpt(pagesText, retainedPages),
     pageScores: retainedScores,
   };
+}
+
+/**
+ * Fallback used when pdf-lib's PDFDocument.load rejects a structurally
+ * malformed PDF (Minnesota SBI meeting books, PERA ACFRs). Produces the
+ * same result shape as `extractCommitmentPages`, returning either every
+ * page (when `totalPages <= maxPagesAll`) or the keyword-filtered subset
+ * (for larger docs where sending every page would blow the API budget).
+ *
+ * Why not always keyword-filter? For small-to-mid-sized malformed docs
+ * (3 pages Feb 2024 minutes, 71 pages Affirmative Action Plan, 298-page
+ * meeting books), keyword filtering can over-prune. Sending the whole
+ * text matches the behavior we'd have gotten if pdf-lib had parsed the
+ * doc and we'd sent the raw PDF to Anthropic.
+ */
+export async function extractPdfTextFallback(
+  pdfBuffer: Uint8Array,
+  opts: { maxPagesAll: number },
+): Promise<ExtractCommitmentPagesResult & { usedKeywordFilter: boolean }> {
+  const { totalPages, pagesText } = await readPagesTextWithUnpdf(pdfBuffer);
+
+  if (totalPages <= opts.maxPagesAll) {
+    const allPages = pagesText.map((_, i) => i + 1);
+    return {
+      pages: allPages,
+      totalPages,
+      extractedText: renderExcerpt(pagesText, allPages),
+      pageScores: allPages.map((p) => ({
+        page: p,
+        score: 0,
+        matched: ["<all-pages-fallback>"],
+      })),
+      usedKeywordFilter: false,
+    };
+  }
+
+  // Doc exceeds the all-pages ceiling — apply the same keyword filter
+  // we use for LACERA agenda packets so we still get the action-item
+  // pages rather than blowing the token budget. Reuse the already-
+  // parsed pagesText so we don't re-ingest the PDF (pdfjs would throw
+  // "Cannot transfer object of unsupported type" on the second call).
+  const filtered = keywordFilterPages(pagesText, totalPages);
+  return { ...filtered, usedKeywordFilter: true };
 }

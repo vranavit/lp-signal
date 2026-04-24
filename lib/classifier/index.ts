@@ -8,7 +8,10 @@ import {
   extractAllocationsFromCafrPdf,
   type ExtractResult,
 } from "./extract";
-import { extractCommitmentPages } from "./extract-commitment-pages";
+import {
+  extractCommitmentPages,
+  extractPdfTextFallback,
+} from "./extract-commitment-pages";
 import { PROMPT_VERSION } from "./prompt";
 import { GP_PROMPT_VERSION } from "./prompts/gp-press-release";
 import { CAFR_PROMPT_VERSION } from "./prompts/cafr-allocation";
@@ -227,7 +230,16 @@ export async function classifyDocument(
       // signals. See lib/classifier/extract-commitment-pages.ts.
       const isAgendaPacket = doc.document_type === "agenda_packet";
 
+      // pdf-lib is strict about cross-reference structure and rejects a
+      // growing set of legitimate PDFs that Anthropic / pdfjs parse
+      // fine (Minnesota SBI meeting books, Colorado PERA full ACFRs).
+      // When the first parse fails with the telltale PDFDict error we
+      // retry with unpdf (pdfjs) and route the extracted text through
+      // the same agenda-excerpt path used for LACERA. This preserves
+      // the full-PDF base64 path for the common case — only unparseable
+      // docs pay the text-extract round-trip.
       let parsedPageCount = 0;
+      let pdfLibFailure: Error | null = null;
       try {
         const pdf = await PDFDocument.load(bytes, {
           ignoreEncryption: true,
@@ -235,9 +247,11 @@ export async function classifyDocument(
         });
         parsedPageCount = pdf.getPageCount();
       } catch (err) {
-        throw new Error(
-          `pdf_parse_failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        pdfLibFailure = err instanceof Error ? err : new Error(String(err));
+      }
+
+      if (pdfLibFailure && !isPdfLibParseRecoverable(pdfLibFailure)) {
+        throw new Error(`pdf_parse_failed: ${pdfLibFailure.message}`);
       }
 
       if (isAgendaPacket) {
@@ -265,6 +279,55 @@ export async function classifyDocument(
             pages: extracted.totalPages,
           };
         }
+        extract = await extractSignalsFromAgendaExcerpt({
+          excerptText: extracted.extractedText,
+          planName: (plan as { name: string }).name,
+          meetingDate: doc.meeting_date,
+          retainedPages: extracted.pages,
+          totalPages: extracted.totalPages,
+        });
+      } else if (pdfLibFailure) {
+        console.log(
+          `[classifier] pdf-lib failed for ${documentId}, falling back to unpdf (${pdfLibFailure.message.slice(0, 60)})`,
+        );
+        let extracted: Awaited<ReturnType<typeof extractPdfTextFallback>>;
+        try {
+          extracted = await extractPdfTextFallback(bytes, {
+            maxPagesAll: MAX_PAGES,
+          });
+        } catch (unpdfErr) {
+          const msg =
+            unpdfErr instanceof Error ? unpdfErr.message : String(unpdfErr);
+          throw new Error(
+            `pdf_parse_failed_both: pdf-lib=${pdfLibFailure.message.slice(0, 60)}; unpdf=${msg.slice(0, 60)}`,
+          );
+        }
+        pageCount = extracted.totalPages;
+        if (extracted.pages.length === 0) {
+          await supabase
+            .from("documents")
+            .update({
+              processing_status: "complete",
+              error_message: `no_commitment_content_unpdf_fallback: ${extracted.totalPages} pages scanned, 0 above threshold`,
+              processed_at: new Date().toISOString(),
+            })
+            .eq("id", documentId);
+          return {
+            documentId,
+            ok: false,
+            reason: "no_commitment_content_unpdf_fallback",
+            signalsExtracted: 0,
+            signalsInserted: 0,
+            signalsAccepted: 0,
+            signalsPreliminary: 0,
+            signalsRejected: 0,
+            tokensUsed: 0,
+            pages: extracted.totalPages,
+          };
+        }
+        console.log(
+          `[classifier] unpdf fallback for ${documentId}: totalPages=${extracted.totalPages} retained=${extracted.pages.length} keywordFilter=${extracted.usedKeywordFilter}`,
+        );
         extract = await extractSignalsFromAgendaExcerpt({
           excerptText: extracted.extractedText,
           planName: (plan as { name: string }).name,
@@ -609,6 +672,24 @@ async function classifyCafr(
     pages: pageCount,
     confidences: response.allocations.map((a) => a.confidence),
   };
+}
+
+/**
+ * Return true for pdf-lib parse errors where unpdf (pdfjs) has a fair
+ * chance of succeeding — i.e. the structural messages we see on
+ * Minnesota SBI meeting books and Colorado PERA ACFRs. Genuine "file
+ * is not a PDF" errors still get thrown so we don't silently retry on
+ * bogus blobs.
+ */
+function isPdfLibParseRecoverable(err: Error): boolean {
+  const msg = err.message;
+  return (
+    /PDFDict/i.test(msg) ||
+    /Invalid object/i.test(msg) ||
+    /Expected instance of/i.test(msg) ||
+    /No PDF header found/i.test(msg) ||
+    /xref/i.test(msg)
+  );
 }
 
 async function markDocError(
