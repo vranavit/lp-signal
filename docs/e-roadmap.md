@@ -205,6 +205,40 @@ Deferred:
 
 Migrations + first-run commands pending manual apply — see the "User finish-line commands" block in session summary.
 
+### CAFR batch recovery: unpdf fallback + negative-pct schema (2026-04-24)
+
+The 8-plan CAFR batch (see next section) hit two distinct failure
+modes when the user ran it:
+
+1. **4 CAFRs failed pdf-lib parse** (`cafr_pdf_parse_failed: Expected instance of PDFDict, but got instance of undefined`) — PA PSERS FY2025, Michigan MPSERS FY2024, MA PRIM FY2025, Minnesota SBI FY2025. Same malformed-cross-reference pattern that rescued MSBI meeting books earlier this session; the CAFR-specific path in `classifyCafr` didn't yet have the unpdf fallback.
+2. **VRS failed Zod schema validation** because allocation row #8 had negative `target_pct` and `actual_pct` (a cash/leverage offset row that nets against positive exposures).
+
+Commits (stacked on the 8-plan CAFR-script batch):
+
+- `24164f6` — **feat(classifier): add unpdf fallback + allocation dedup to CAFR path**. Mirrors the non-CAFR fallback in `classifyCafr`; adds `extractAllocationsFromCafrText` that sends an unpdf-extracted text excerpt via `<cafr_text_excerpt>` to the existing CAFR classifier prompt. Also dedups `(asset_class, coalesce(sub_class,''))` before insert (matching the Day-9.5 H-2 unique index) — the policy table sometimes appears twice in a single ACFR (Investment Section + Statistical Section) and the previous atomic insert would fail the whole batch on the first duplicate.
+- `a63cf45` — **fix(cafr-schema): allow negative allocation percentages**. `target_pct`, `target_min_pct`, `target_max_pct`, `actual_pct` move from `min(0)` to `min(-100)` in both the Zod schema and the Anthropic Tool `input_schema`. Descriptions updated to note the cash/leverage offset case.
+
+Retry outcome on the 5 failed CAFRs:
+
+| Plan | path | tokens | rows |
+|---|---|---:|---:|
+| PA PSERS | unpdf fallback (150 pages) | 110K | 6 |
+| Michigan SMRS | unpdf fallback (132 pages) | 89K | 8 |
+| MA PRIM | unpdf fallback (119 pages) | 82K | 8 |
+| Minnesota SBI | unpdf fallback (206 pages) | 136K | 3 |
+| VRS | standard PDF path (340 pages) | 817K | 9 (incl. negative Leverage row) |
+
+Total: **34 new allocation rows** across 5 plans, ~1.2M tokens, ~$4-5 spend.
+
+Coverage impact:
+
+- `pension_allocations` rows: **111 → 145** (+34)
+- Thorough plans: **7 → 12** (CalPERS, CalSTRS, NYSCRF, WSIB, Oregon PERS, NYSTRS, NJ DOI plus today's PA PSERS, Michigan SMRS, MSBI, MA PRIM, VRS)
+
+Deferred:
+
+- **LACERA CAFR** — the user's run of the 8-script batch never actually executed `scripts/scrape-cafr-lacera.ts`; 0 CAFR documents exist for LACERA today. Running it will add LACERA to the thorough count (13). Command: `pnpm tsx scripts/scrape-cafr-lacera.ts && pnpm tsx scripts/classify-pending.ts`.
+
 ### Signal-only → thorough CAFR batch (2026-04-24)
 
 Goal: move the 8 signal-only pension plans into the thorough bucket by ingesting their most recent allocation-bearing annual reports. After the user runs these 8 scripts, thorough plan count should move from **5 → 11-13** depending on allocation yield.
