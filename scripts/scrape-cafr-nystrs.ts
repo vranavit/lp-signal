@@ -1,23 +1,21 @@
 /**
- * Day 10 signal-only→thorough batch: NYSTRS PAFR ingestion.
+ * Day 10 signal-only→thorough batch: NYSTRS full ACFR ingestion.
  *
  * NYSTRS (New York State Teachers' Retirement System) fiscal year ends
- * June 30. The full ACFR is published at nystrs.org/getmedia/<uuid>/.
+ * June 30. Default now targets the FY2025 full ACFR (47.8 MB), which
+ * routes automatically through the Files-API fallback (lib/classifier/
+ * files-api.ts) because it exceeds the 24 MB inline-base64 threshold.
  *
- * Default URL targets the Popular Annual Financial Report (PAFR), NOT
- * the full ACFR, because the FY2025 ACFR is 47.8 MB and the FY2024
- * ACFR is 27.4 MB (base64-expanded to ~36.5 MB, over the Anthropic
- * 32 MB inline request ceiling). The PAFR at 4.3 MB summarises both
- * FY2024 and FY2025 and contains the same target / actual allocation
- * breakdown the CAFR classifier extracts.
+ * Full ACFR vs PAFR: both report 11 asset-class rows but the ACFR
+ * provides sub-class granularity (Domestic / International / Global
+ * Equity, Domestic FI / High-Yield Bonds / Global Bonds, Real Estate
+ * Debt vs Private Debt under Credit) that the PAFR summary aggregates.
  *
  * Source:
- *   https://www.nystrs.org/getmedia/7c065b22-f861-4931-b633-6c1fe65fffc6/PAFR.pdf
- *
- * Once the classifier migrates to the Anthropic Files API (which
- * bypasses the inline base64 ceiling), swap DEFAULT_URL to the full
- * FY2025 ACFR:
  *   https://www.nystrs.org/getmedia/aa31d8ed-8708-4985-be81-8e124f48dad2/2025-ACFR.pdf
+ *
+ * Prior default (keep for rollback) — FY2024/FY2025 PAFR (4.3 MB):
+ *   https://www.nystrs.org/getmedia/7c065b22-f861-4931-b633-6c1fe65fffc6/PAFR.pdf
  *
  * Usage:
  *   pnpm tsx --env-file=.env.local scripts/scrape-cafr-nystrs.ts
@@ -28,7 +26,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ingestCafr } from "@/lib/scrapers/cafr";
 
 const DEFAULT_URL =
-  "https://www.nystrs.org/getmedia/7c065b22-f861-4931-b633-6c1fe65fffc6/PAFR.pdf";
+  "https://www.nystrs.org/getmedia/aa31d8ed-8708-4985-be81-8e124f48dad2/2025-ACFR.pdf";
 const DEFAULT_FISCAL_YEAR_END = "2025-06-30";
 
 function parseArgs() {
