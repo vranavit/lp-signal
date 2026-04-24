@@ -182,6 +182,29 @@ pnpm tsx scripts/classify-pending.ts
 
 Post-Session 3 pension coverage: **18 plans** (15 existing + 3 new). Target signal-coverage after first ingest + classify: 12+ productive plans.
 
+### Day 10 Task C+ — shipped (2026-04-24)
+
+Goal: reach **20 plans with 5 "thorough"** (signals + allocation data). Three components, executed in order.
+
+Commits (stacked on Session 3):
+
+- `a141db8` — **feat(scrapers): add Minnesota SBI pension scraper + seed migration**. MSBI publishes packets, minutes, and approvals to `/sites/default/files/YYYY-MM/*.pdf`. Parser handles the three generations of drifting filename conventions (lowercase-underscore, Title-Case-URL-encoded-spaces, "Approvals" no-day variants) and falls back to the YYYY-MM path segment. Live parse yields 66 candidates spanning 2020–2026 (22 materials + 23 minutes + 19 approvals + 2 other), 0 unmatched dates. AUM seeded at $150B. Plumbed into the existing wave-2 fan-out.
+- `6180476` — **feat(scrapers): add Colorado PERA pension scraper + seed migration**. PERA does **not** publicly publish Board of Trustees meeting minutes — the copera.org board page lists only governance documents. Component 2 pivoted to CAFR-only ingestion via the existing `ingestCafr` helper; no board-minutes scraper, no wave-2 binding. Size blocker: the FY2024 ACFR is 84 MB and the FY2023 is 60 MB — both exceed Anthropic's 32 MB base64 request ceiling, so the runner defaults to the FY2022 ACFR (7.1 MB). When the classifier migrates to the Anthropic Files API, swap the `--url` default to the FY2024 link. AUM seeded at $64B.
+- `beed801` — **feat(allocations): add Oregon PERS CAFR ingestion script**. Converts Oregon PERS from signals-only (50+ Session-2 board-minutes signals) into a **thorough** plan — signals + allocations. Targets the FY2025 ACFR at `oregon.gov/pers/Documents/Financials/ACFR/2025-ACFR.pdf` (198 pages, 6.9 MB — well under the Anthropic ceiling and the 500-page `CAFR_MAX_PAGES` cap). One-off runner; Oregon PERS plan row already seeded in Session 2, no migration needed.
+
+Coverage impact (post-user-run):
+
+- Plans: **18 → 20** (Minnesota SBI + Colorado PERA)
+- Productive for signals: 12 → **13** (Minnesota SBI adds signals; Colorado PERA is CAFR-only so no signal delta)
+- Thorough (signals + allocations): 4 → **5** (Oregon PERS joins CalSTRS, CalPERS, NYSCRF, WSIB)
+
+Deferred:
+
+- **Colorado PERA board minutes** — source does not publicly publish them. Not a scraper bug; recorded in `docs/scraper-inventory.md` "Deliberately skipped" section.
+- **PERA FY2024 ACFR ingestion** — 84 MB PDF exceeds Anthropic 32 MB base64 ceiling. Requires Files-API classifier migration (separate task). Runner points at FY2022 ACFR (7.1 MB) as an interim allocation snapshot.
+
+Migrations + first-run commands pending manual apply — see the "User finish-line commands" block in session summary.
+
 ### Fund fact sheet ingestion (Phase 4+)
 
 Current limitation: some pensions publish allocation **targets** in the CAFR but **actuals** only in quarterly fund fact sheets or investment performance reports. 3 of 6 pensions with allocation data are currently target-only at their latest snapshot (NYSCRF 2025-03-31, WSIB 2025-06-30, Wisconsin SWIB 2024-12-31; TRS Texas 2025-08-31 reports non-PM classes only). 25 of 74 `pension_allocations` rows have `actual_pct IS NULL` and silently contribute `$0` to the unfunded-budget total.

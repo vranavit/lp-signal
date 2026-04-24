@@ -20,6 +20,7 @@ Established 2026-04-23 (Day 10 Session 1) during the continuous-ingestion build.
 | `vrs` | `lib/scrapers/vrs.ts` | Board agendas + materials + minutes (PDF) | `varetire.org/media/members/pdf/board/{agendas,materials,minutes}/YYYY/*.pdf` | daily check (~monthly meetings) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | Virginia Retirement System; index-page scrape, 75 candidates live (29 agendas + 29 materials + 17 minutes) |
 | `nj_doi` | `lib/scrapers/nj-doi.ts` | Approved board minutes (PDF) | `nj.gov/treasury/doinvest/pdf/ApprovedMinutes/YYYY/*.pdf` | daily check (~monthly meetings) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | NJ State Investment Council; index-page scrape, 142 historical candidates spanning 2008–2025 |
 | `lacera` | `lib/scrapers/lacera.ts` | Board agendas + minutes (PDF) | `lacera.gov/sites/default/files/assets/documents/board/YYYY/BOI/YYYY-MM-DD-boi_{agnd,min}.pdf` | daily check (~monthly meetings) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | LA County ERA; hybrid index (~10 current-year) + date-candidate probe (2nd Tues/Wed × 18 months) for older-year coverage |
+| `minnesota_sbi` | `lib/scrapers/minnesota-sbi.ts` | Board meeting packets + minutes + approvals (PDF) | `msbi.us/sites/default/files/YYYY-MM/*.pdf` | daily check (~quarterly meetings) | `/api/cron/scrape-pension-wave-2` (fan-out) | `45 17 * * *` | Minnesota SBI; index-page scrape, 66 candidates live spanning 2020–2026 (22 materials + 23 minutes + 19 approvals + 2 other) |
 | `cafr-*` | `scripts/scrape-cafr-*.ts` | Annual CAFR / ACFR | various | weekly check (annual publish, 6-12 mo lag) | `/api/cron/scrape-cafr` | `0 18 * * 1` | One consolidated weekly cron fans out to each `scrape-cafr-*` target |
 
 ## Supporting infrastructure
@@ -31,7 +32,7 @@ Established 2026-04-23 (Day 10 Session 1) during the continuous-ingestion build.
 | `/api/cron/policy-change-alert` | `0 15 * * *` | Daily digest of target-allocation moves |
 | `/api/cron/scraper-health-check` | `0 19 * * *` | Alerts when a source hasn't been checked in 2× its expected cadence |
 
-Total cron count: **15** (11 scraping + 1 wave-2 fan-out + classify + 2 alerts + health-check). Right at the Vercel 15-cron hard stop. Session 3 added VRS, NJ DOI, and LACERA into the `scrape-pension-wave-2` fan-out — which now holds 5 sub-scrapers (Oregon, PRIM, VRS, NJ DOI, LACERA) behind the single Vercel cron entry. New pension sources register themselves here instead of getting their own cron.
+Total cron count: **15** (11 scraping + 1 wave-2 fan-out + classify + 2 alerts + health-check). Right at the Vercel 15-cron hard stop. Task C+ added Minnesota SBI into the `scrape-pension-wave-2` fan-out, bringing it to 6 sub-scrapers (Oregon, PRIM, VRS, NJ DOI, LACERA, Minnesota SBI) behind the single Vercel cron entry. New pension sources register themselves here instead of getting their own cron.
 
 ## Deliberately skipped
 
@@ -40,6 +41,7 @@ Total cron count: **15** (11 scraping + 1 wave-2 fan-out + classify + 2 alerts +
 - **Ares** — Cloudflare JS challenge. Deferred.
 - **Florida SBA** — Akamai edge block. Deferred; Florida SBA pension row carries a "Blocked by source" availability pill on `/plans` (see Day 9.3 H-2 fix).
 - **Ohio PERS** — `opers.org/about/board/meetings/` exposes only a dates-table with empty Agendas/Minutes columns; no public document index to crawl. Investigated in Session 2 and flagged blocked. Ohio PERS row exists in `plans` from Day 9.3 and carries the same "Pending ingestion" availability pill as the other blocked pensions.
+- **Colorado PERA (board minutes)** — copera.org does not publicly publish Board of Trustees meeting minutes; the Board and Leadership page lists only governance documents (strategic plan, investment policy, standing-committee assignments, trustee statements on divestment). Task C+ investigation pivoted PERA to CAFR-only ingestion via `scripts/scrape-cafr-colorado-pera.ts`; no board-minutes scraper registered.
 
 ## Fingerprint discipline
 
