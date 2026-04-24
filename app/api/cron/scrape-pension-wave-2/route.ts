@@ -3,6 +3,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { scrapeOregon } from "@/lib/scrapers/oregon";
 import { scrapeMaPrim } from "@/lib/scrapers/ma-prim";
 import { scrapeVrs } from "@/lib/scrapers/vrs";
+import { scrapeNjDoi } from "@/lib/scrapers/nj-doi";
 import {
   isAuthorizedCron,
   type CronWorkResult,
@@ -150,6 +151,20 @@ const SUB_SCRAPERS: Array<{
       const r = await scrapeVrs(supabase, { planId, maxPdfs: 20 });
       return {
         hashHint: `vrs:cands=${r.candidatesFound}:inserted=${r.inserted}:skipped=${r.skipped}`,
+        inserted: r.inserted,
+        skipped: r.skipped,
+        errors: r.errors,
+        summary: `cands=${r.candidatesFound} fetched=${r.pdfsFetched} inserted=${r.inserted} skipped=${r.skipped} errs=${r.errors.length}`,
+      };
+    },
+  },
+  {
+    sourceKey: "nj_doi",
+    run: async (planId: string) => {
+      const supabase = createSupabaseAdminClient();
+      const r = await scrapeNjDoi(supabase, { planId, maxPdfs: 20 });
+      return {
+        hashHint: `nj_doi:cands=${r.candidatesFound}:inserted=${r.inserted}:skipped=${r.skipped}`,
         inserted: r.inserted,
         skipped: r.skipped,
         errors: r.errors,
