@@ -1,18 +1,25 @@
 /**
- * Ingest the most recent CalPERS investment-focused annual report.
- * The full ACFR (acfr-2025) is 30.4 MB — past Anthropic's 32 MB per-request
- * limit once base64 encoding inflates the payload. The Annual Investment
- * Report is CalPERS' purpose-built, investment-only companion: same asset
- * allocation tables, no actuarial/legal bloat, ~5–8 MB.
+ * Ingest the CalPERS PERF Annual Comprehensive Financial Report (ACFR).
  *
- * URL pattern:  https://www.calpers.ca.gov/documents/annual-investment-report-fy-{YYYY}/download?inline
+ * Updated 2026-04-26: switched from the Annual Investment Report to the full
+ * ACFR (acfr-2025, 30.4 MB raw, FY ending 2025-06-30). The earlier
+ * AIR-as-fallback workaround predates the Files API path landed in 2dc1d09 —
+ * with that path live, the 30.4 MB ACFR routes through Anthropic's Files API
+ * automatically when base64 inflation pushes it past the 32 MB inline ceiling.
+ *
+ * The full ACFR matters because the prior CalPERS allocation snapshot in the
+ * DB came from 202411-invest-agenda-item04c-01-a (a CERBT Strategy 1 SAA
+ * review, $20B AUM, no PE / Infra / Credit) — a workaround from before Files
+ * API support. PERF is ~$500B with the full PE / Infra / Credit / RE / Public
+ * Equity / Fixed Income / Cash mix. See docs/audits/duplicate-allocations-
+ * audit-2026-04-25.md "Issue C" findings for the diagnosis.
  */
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ingestCafr } from "@/lib/scrapers/cafr";
 
 const CAFR_URL =
-  "https://www.calpers.ca.gov/documents/annual-investment-report-fy-2025/download?inline";
+  "https://www.calpers.ca.gov/documents/acfr-2025/download?inline";
 const FISCAL_YEAR_END = "2025-06-30"; // CalPERS FY ends June 30.
 
 async function main() {

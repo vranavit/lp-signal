@@ -1,10 +1,26 @@
 /**
- * Unfunded budget = (target_pct − actual_pct) / 100 × total_plan_aum_usd.
+ * Unfunded budget per asset class, range-aware.
  *
- * Per Day 5 spec, capped at zero on the negative side: an overweight
- * position has no deployable budget, just rebalancing pressure. Returns 0
- * (not null) if any input is missing so calling code can sum across rows
- * without null-handling boilerplate.
+ * Two cases:
+ *
+ *   (1) Policy specifies a range (target_min_pct, target_max_pct):
+ *       - actual < min  -> gap = (min - actual) / 100 * AUM   (real deployment opportunity)
+ *       - actual within -> gap = 0                            (policy endorses, not unfunded)
+ *       - actual > max  -> gap = 0                            (overweight, rebalance pressure not deployment)
+ *
+ *   (2) Policy specifies only a point target (no range):
+ *       - actual < target -> gap = (target - actual) / 100 * AUM
+ *       - actual >= target -> gap = 0
+ *
+ * Treating an in-range allocation as "unfunded" overstates the headline --
+ * policy explicitly says anywhere in the band is fine. Pre-2026-04-26 the
+ * code used (target - actual) regardless of range, which inflated the
+ * landing-page hero whenever a plan was in-band but below midpoint. The
+ * range-aware version drops the headline figure but is honest under
+ * scrutiny from sophisticated buyers (PE IR teams who read CAFRs).
+ *
+ * Returns 0 (not null) if any required input is missing so calling code can
+ * sum across rows without null-handling boilerplate.
  *
  * The "headline number" used on the pension profile and outreach dashboard
  * is the SUM of unfunded budget across the private-markets asset classes
@@ -24,21 +40,28 @@ export const PRIVATE_MARKETS_CLASSES = [
 export type AllocationLike = {
   asset_class: string;
   target_pct: number | null;
+  target_min_pct?: number | null;
+  target_max_pct?: number | null;
   actual_pct: number | null;
   total_plan_aum_usd: number | null;
 };
 
 export function unfundedUsd(row: AllocationLike): number {
-  if (
-    row.target_pct == null ||
-    row.actual_pct == null ||
-    row.total_plan_aum_usd == null
-  ) {
-    return 0;
+  if (row.actual_pct == null || row.total_plan_aum_usd == null) return 0;
+
+  const actual = Number(row.actual_pct);
+  const aum = Number(row.total_plan_aum_usd);
+
+  if (row.target_min_pct != null && row.target_max_pct != null) {
+    const minPct = Number(row.target_min_pct);
+    if (actual >= minPct) return 0;
+    return Math.round(((minPct - actual) / 100) * aum);
   }
-  const gapPct = Number(row.target_pct) - Number(row.actual_pct);
+
+  if (row.target_pct == null) return 0;
+  const gapPct = Number(row.target_pct) - actual;
   if (gapPct <= 0) return 0;
-  return Math.round((gapPct / 100) * Number(row.total_plan_aum_usd));
+  return Math.round((gapPct / 100) * aum);
 }
 
 export function privateMarketsUnfundedUsd(rows: AllocationLike[]): number {

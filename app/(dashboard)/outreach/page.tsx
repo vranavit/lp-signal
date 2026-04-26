@@ -53,11 +53,13 @@ export default async function OutreachPage() {
 
   // Compute unfunded budget per plan from the rollup view (one row per
   // (plan, asset_class) at the latest snapshot, sub-sleeves summed).
+  // Range columns drive range-aware unfundedUsd; in-range allocations
+  // contribute zero rather than fake "deployment opportunity" dollars.
   // Server-side so the outreach UI can filter without paginating.
   const { data: allocs } = await supabase
     .from("pension_allocations_rollup")
     .select(
-      "plan_id, asset_class, target_pct, actual_pct, total_plan_aum_usd, as_of_date, plan:plans(id, name, country, scrape_config)",
+      "plan_id, asset_class, target_pct, target_min_pct, target_max_pct, actual_pct, total_plan_aum_usd, as_of_date, plan:plans(id, name, country, scrape_config)",
     )
     .eq("preliminary", false);
 
@@ -65,6 +67,8 @@ export default async function OutreachPage() {
     plan_id: string;
     asset_class: string;
     target_pct: number;
+    target_min_pct: number | null;
+    target_max_pct: number | null;
     actual_pct: number | null;
     total_plan_aum_usd: number | null;
     as_of_date: string;

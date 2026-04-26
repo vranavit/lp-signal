@@ -6,6 +6,7 @@ import {
   isEmpty,
   type AvailabilityStatus,
 } from "@/lib/plans/data-availability";
+import { resolvePlanAum } from "@/lib/relevance/plan-aum";
 
 export const dynamic = "force-dynamic";
 
@@ -28,10 +29,12 @@ export default async function PlansPage() {
       .select("plan_id")
       .eq("seed_data", false)
       .not("validated_at", "is", null),
-    // Rollup view: one row per (plan, asset_class). The "Allocations"
-    // column then reads as "asset classes covered" rather than raw row
-    // count inflated by sub-sleeves.
-    supabase.from("pension_allocations_rollup").select("plan_id"),
+    // Rollup view: one row per (plan, asset_class). Drives the
+    // "Allocations" count column AND the resolved AUM (max
+    // total_plan_aum_usd per plan, which is the latest CAFR snapshot).
+    supabase
+      .from("pension_allocations_rollup")
+      .select("plan_id, total_plan_aum_usd, as_of_date"),
     supabase
       .from("documents")
       .select("plan_id")
@@ -39,16 +42,44 @@ export default async function PlansPage() {
   ]);
 
   const signalsByPlan = countBy((signalRows ?? []) as { plan_id: string | null }[]);
-  const allocsByPlan = countBy((allocRows ?? []) as { plan_id: string | null }[]);
   const docsByPlan = countBy((docRows ?? []) as { plan_id: string | null }[]);
 
+  // For each plan: count distinct rollup rows + resolve AUM from the
+  // largest total_plan_aum_usd in the latest snapshot. Same value for
+  // every row of a given (plan, as_of_date), so any non-null pick works.
+  type AllocRow = {
+    plan_id: string | null;
+    total_plan_aum_usd: number | null;
+    as_of_date: string | null;
+  };
+  const allocByPlan = new Map<
+    string,
+    { count: number; aum: number | null; asOf: string | null }
+  >();
+  for (const r of (allocRows ?? []) as AllocRow[]) {
+    if (!r.plan_id) continue;
+    const cur = allocByPlan.get(r.plan_id) ?? {
+      count: 0,
+      aum: null,
+      asOf: null,
+    };
+    cur.count += 1;
+    if (cur.aum == null && r.total_plan_aum_usd != null) {
+      cur.aum = Number(r.total_plan_aum_usd);
+      cur.asOf = r.as_of_date;
+    }
+    allocByPlan.set(r.plan_id, cur);
+  }
+
   const rows = (plans ?? []).map((p) => {
+    const a = allocByPlan.get(p.id);
     const counts = {
       signals: signalsByPlan.get(p.id) ?? 0,
-      allocations: allocsByPlan.get(p.id) ?? 0,
+      allocations: a?.count ?? 0,
       documents: docsByPlan.get(p.id) ?? 0,
     };
-    return { plan: p, counts, empty: isEmpty(counts) };
+    const aum = resolvePlanAum(p.aum_usd, a?.aum ?? null, a?.asOf ?? null, p.name);
+    return { plan: p, counts, empty: isEmpty(counts), aum };
   });
 
   return (
@@ -78,7 +109,7 @@ export default async function PlansPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ plan: p, counts, empty }) => {
+              {rows.map(({ plan: p, counts, empty, aum }) => {
                 const slug =
                   p.scrape_config &&
                   typeof p.scrape_config === "object" &&
@@ -117,7 +148,23 @@ export default async function PlansPage() {
                       {p.country}
                     </td>
                     <td className="px-4 py-0 align-middle text-right num tabular-nums text-[13px] text-ink">
-                      {formatUSD(p.aum_usd)}
+                      <span
+                        title={
+                          aum.source === "allocation" && aum.asOfDate
+                            ? `From latest CAFR snapshot, as of ${formatDate(aum.asOfDate)}`
+                            : aum.source === "plan_table"
+                            ? "Editorial estimate (no CAFR allocation ingested or anomaly fallback)"
+                            : "AUM unavailable"
+                        }
+                        className="cursor-help"
+                      >
+                        {formatUSD(aum.value ?? p.aum_usd)}
+                      </span>
+                      {aum.source === "allocation" && aum.asOfDate ? (
+                        <div className="text-[10.5px] text-ink-faint mt-0.5 num tabular-nums">
+                          as of {formatDate(aum.asOfDate)}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-0 align-middle num text-[12.5px] text-ink-muted">
                       T{p.tier ?? "—"}

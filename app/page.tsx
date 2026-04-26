@@ -1,7 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { privateMarketsUnfundedUsd } from "@/lib/relevance/unfunded";
+import {
+  privateMarketsUnfundedUsd,
+  PRIVATE_MARKETS_CLASSES,
+  unfundedUsd,
+} from "@/lib/relevance/unfunded";
+import { resolvePlanAum } from "@/lib/relevance/plan-aum";
 import { TopNav } from "@/components/landing/top-nav";
 import { Hero } from "@/components/landing/hero";
 import { ProductExplanation } from "@/components/landing/product-explanation";
@@ -105,7 +110,7 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
       supabase
         .from("pension_allocations_rollup")
         .select(
-          "plan_id, asset_class, target_pct, actual_pct, total_plan_aum_usd, as_of_date",
+          "plan_id, asset_class, target_pct, target_min_pct, target_max_pct, actual_pct, total_plan_aum_usd, as_of_date",
         ),
       supabase
         .from("signals")
@@ -127,11 +132,12 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
       plan_id: string;
       asset_class: string;
       target_pct: number;
+      target_min_pct: number | null;
+      target_max_pct: number | null;
       actual_pct: number | null;
       total_plan_aum_usd: number | null;
       as_of_date: string;
     }>;
-    const PM = new Set(["PE", "Infra", "Credit", "RE", "VC"]);
     const byPlan = new Map<string, typeof rows>();
     for (const r of rows) {
       if (!byPlan.has(r.plan_id)) byPlan.set(r.plan_id, []);
@@ -142,8 +148,11 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
     let pensionsTargetOnly = 0;
     for (const list of byPlan.values()) {
       // Rollup view already returns the latest snapshot per (plan,
-      // asset_class) — no JS-side filtering needed.
-      const pm = list.filter((r) => PM.has(r.asset_class));
+      // asset_class) -- no JS-side filtering needed. unfundedUsd is
+      // range-aware (only treats below-min as deployment opportunity).
+      const pm = list.filter((r) =>
+        (PRIVATE_MARKETS_CLASSES as readonly string[]).includes(r.asset_class),
+      );
       // Completeness: a plan is "with actuals" only if every PM row in its
       // latest snapshot has actual_pct set. One NULL tips it to "target
       // only" so the caption can't overstate coverage.
@@ -152,12 +161,7 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
         if (anyActualMissing) pensionsTargetOnly++;
         else pensionsWithActuals++;
       }
-      for (const r of list) {
-        if (r.actual_pct == null || r.total_plan_aum_usd == null) continue;
-        const gap = Number(r.target_pct) - Number(r.actual_pct);
-        if (gap <= 0) continue;
-        unfundedTotal += Math.round((gap / 100) * Number(r.total_plan_aum_usd));
-      }
+      unfundedTotal += privateMarketsUnfundedUsd(list);
     }
 
     const trackedPlanIds = new Set<string>(byPlan.keys());
@@ -195,15 +199,20 @@ async function loadCalstrsUnderweight(
   if (!plan) return { top3: [], unfundedPmTotal: 0 };
   // Rollup view returns one row per (plan, asset_class) from the latest
   // CAFR snapshot, so sub-sleeves don't duplicate the underweight ranking.
+  // Range columns surface only when the asset_class has a single sub-sleeve
+  // (target_min_pct / target_max_pct don't aggregate); the underweight
+  // ranking uses the same range-aware unfundedUsd helper as the hero math.
   const { data } = await supabase
     .from("pension_allocations_rollup")
     .select(
-      "asset_class, target_pct, actual_pct, total_plan_aum_usd, as_of_date",
+      "asset_class, target_pct, target_min_pct, target_max_pct, actual_pct, total_plan_aum_usd, as_of_date",
     )
     .eq("plan_id", plan.id);
   const rows = (data ?? []) as Array<{
     asset_class: string;
     target_pct: number;
+    target_min_pct: number | null;
+    target_max_pct: number | null;
     actual_pct: number | null;
     total_plan_aum_usd: number | null;
     as_of_date: string;
@@ -211,22 +220,15 @@ async function loadCalstrsUnderweight(
   if (rows.length === 0) return { top3: [], unfundedPmTotal: 0 };
   const unfundedPmTotal = privateMarketsUnfundedUsd(rows);
   const underweight = rows
-    .filter((r) => r.actual_pct != null && r.total_plan_aum_usd != null)
-    .map((r) => {
-      const gap = Number(r.target_pct) - Number(r.actual_pct!);
-      return {
-        asset_class: r.asset_class,
-        target_pct: Number(r.target_pct),
-        actual_pct: Number(r.actual_pct),
-        unfunded_usd:
-          gap > 0
-            ? Math.round((gap / 100) * Number(r.total_plan_aum_usd!))
-            : 0,
-      };
-    })
-    .filter((r) => r.unfunded_usd > 0)
+    .map((r) => ({
+      asset_class: r.asset_class,
+      target_pct: Number(r.target_pct),
+      actual_pct: r.actual_pct == null ? null : Number(r.actual_pct),
+      unfunded_usd: unfundedUsd(r),
+    }))
+    .filter((r) => r.unfunded_usd > 0 && r.actual_pct != null)
     .sort((a, b) => b.unfunded_usd - a.unfunded_usd)
-    .slice(0, 3);
+    .slice(0, 3) as UnderweightRow[];
   return { top3: underweight, unfundedPmTotal };
 }
 
@@ -370,17 +372,20 @@ async function loadOutreachPreview(
   supabase: SupabaseClient,
 ): Promise<OutreachPreviewRow[]> {
   // Rollup view: one row per (plan, asset_class) from the latest snapshot.
-  // No JS-side latest-date filtering needed; sub-sleeves can't double-count.
+  // Range columns let unfundedUsd treat in-range allocations as zero rather
+  // than overstating "unfunded budget" with naive (target - actual).
   const { data } = await supabase
     .from("pension_allocations_rollup")
     .select(
-      "plan_id, asset_class, target_pct, actual_pct, total_plan_aum_usd, as_of_date, plan:plans(id, name, country, scrape_config)",
+      "plan_id, asset_class, target_pct, target_min_pct, target_max_pct, actual_pct, total_plan_aum_usd, as_of_date, plan:plans(id, name, country, scrape_config)",
     )
     .eq("preliminary", false);
   const rows = (data ?? []) as unknown as Array<{
     plan_id: string;
     asset_class: string;
     target_pct: number;
+    target_min_pct: number | null;
+    target_max_pct: number | null;
     actual_pct: number | null;
     total_plan_aum_usd: number | null;
     as_of_date: string;

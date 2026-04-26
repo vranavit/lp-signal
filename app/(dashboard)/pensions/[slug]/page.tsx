@@ -19,16 +19,21 @@ import {
   privateMarketsUnfundedSummary,
   privateMarketsUnfundedUsd,
 } from "@/lib/relevance/unfunded";
+import { resolvePlanAum } from "@/lib/relevance/plan-aum";
+import { classifyVsRange, bandLabel } from "@/lib/relevance/range-classify";
 
 export const dynamic = "force-dynamic";
 
 // Per-asset-class summed view, one row per (plan, asset_class). Read from
 // pension_allocations_rollup. Sub-sleeves are summed; actual_pct/actual_usd
 // are NULL when any contributing sub-sleeve is target-only.
+// target_min_pct / target_max_pct surface only when sub_class_count = 1.
 type AllocationRollupRow = {
   as_of_date: string;
   asset_class: string;
   target_pct: number;
+  target_min_pct: number | null;
+  target_max_pct: number | null;
   actual_pct: number | null;
   actual_usd: number | null;
   total_plan_aum_usd: number | null;
@@ -98,7 +103,7 @@ export default async function PensionProfilePage({
     supabase
       .from("pension_allocations_rollup")
       .select(
-        "as_of_date, asset_class, target_pct, actual_pct, actual_usd, total_plan_aum_usd, preliminary, sub_class_count",
+        "as_of_date, asset_class, target_pct, target_min_pct, target_max_pct, actual_pct, actual_usd, total_plan_aum_usd, preliminary, sub_class_count",
       )
       .eq("plan_id", plan.id)
       .order("asset_class", { ascending: true }),
@@ -127,8 +132,18 @@ export default async function PensionProfilePage({
   }));
 
   const latestAsOf = rollupRows[0]?.as_of_date ?? null;
-  const totalAum =
+  const allocAum =
     rollupRows.find((r) => r.total_plan_aum_usd)?.total_plan_aum_usd ?? null;
+  // Resolved AUM: prefer the latest CAFR snapshot when within 0.5x-2x of the
+  // editorial plan_aum, fall back to plan_aum on anomaly (defends against
+  // wrong-document ingestions like the CalPERS / CERBT incident).
+  const resolvedAum = resolvePlanAum(
+    plan.aum_usd,
+    allocAum,
+    latestAsOf,
+    plan.name,
+  );
+  const totalAum = resolvedAum.value;
 
   // Unfunded budget = (target − actual) / 100 × AUM, capped at zero, summed
   // across private-markets asset classes. This is the cold-email headline.
@@ -248,7 +263,8 @@ export default async function PensionProfilePage({
                   AUM{" "}
                   <span className="num tabular-nums text-ink">
                     {formatUSD(plan.aum_usd)}
-                  </span>
+                  </span>{" "}
+                  <span className="text-ink-faint text-[10.5px]">(editorial)</span>
                 </span>
                 {planWebsite ? (
                   <a
@@ -323,6 +339,7 @@ export default async function PensionProfilePage({
               plan={plan}
               latestAsOf={latestAsOf}
               website={planWebsite}
+              resolvedAum={resolvedAum}
             />
           </div>
           {headlineUnfunded > 0 ? (
@@ -336,7 +353,7 @@ export default async function PensionProfilePage({
                   total={headlineUnfunded}
                   perClass={perClassUnfunded}
                   asOfDate={latestAsOf}
-                  aumUsd={totalAum ?? plan.aum_usd}
+                  aumUsd={resolvedAum.value}
                   withActualsCount={unfundedSummary.withActualsCount}
                   targetOnlyCount={unfundedSummary.targetOnlyCount}
                 />
@@ -402,8 +419,14 @@ export default async function PensionProfilePage({
       <div className="grid grid-cols-3 gap-3">
         <StatCard
           label="Plan AUM"
-          value={formatUSD(totalAum ?? plan.aum_usd)}
-          sublabel={latestAsOf ? `as of ${formatDate(latestAsOf)}` : undefined}
+          value={formatUSD(resolvedAum.value)}
+          sublabel={
+            resolvedAum.source === "allocation" && resolvedAum.asOfDate
+              ? `as of ${formatDate(resolvedAum.asOfDate)}`
+              : resolvedAum.source === "plan_table"
+              ? "editorial estimate"
+              : undefined
+          }
         />
         <StatCard
           label="Transaction signals"
@@ -435,7 +458,9 @@ export default async function PensionProfilePage({
                   <span className="num tabular-nums">
                     {formatDate(latestAsOf)}
                   </span>
-                  . Gap = target − actual. Positive gap = unfunded budget.
+                  . When a policy range is published, an actual within the
+                  band shows no gap; deployment opportunity is computed
+                  against the band minimum, not the midpoint.
                 </>
               ) : (
                 "No CAFR allocations ingested yet."
@@ -738,6 +763,10 @@ function AllocationTable({
 // Parent row. Always visible. Reads target/actual/AUM from the rollup view
 // so target-only NULL semantics are preserved (rollup's bool_and guard
 // already returns NULL whenever ANY contributing sub-sleeve is target-only).
+// Range-aware: when target_min_pct + target_max_pct + actual_pct are all
+// present, render a range classification (below / within / above) instead
+// of a naive (target - actual) gap. Within-range allocations show no $ gap
+// because policy explicitly endorses anywhere in the band.
 function ParentRow({
   rollup,
   single,
@@ -749,37 +778,14 @@ function ParentRow({
   totalAum: number | null;
   hasSubSleeves: boolean;
 }) {
-  const gapPct =
-    rollup.actual_pct != null ? rollup.target_pct - rollup.actual_pct : null;
-  const gapUsd =
-    gapPct != null && totalAum
-      ? Math.round((gapPct / 100) * totalAum)
-      : null;
-  const tone =
-    gapPct == null
-      ? "neutral"
-      : gapPct > 0.5
-      ? "positive"
-      : gapPct < -0.5
-      ? "negative"
-      : "neutral";
-  const range =
-    !hasSubSleeves &&
-    single &&
-    single.target_min_pct != null &&
-    single.target_max_pct != null
-      ? `${fmtPct(single.target_min_pct)} – ${fmtPct(single.target_max_pct)}`
-      : null;
+  const minPct = rollup.target_min_pct;
+  const maxPct = rollup.target_max_pct;
   return (
-    <tr
-      className="h-11 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02]"
-      title={single?.source_quote ?? undefined}
-    >
-      <td className="px-4 py-0 align-middle text-ink">
-        <span>{rollup.asset_class}</span>
-      </td>
-      <td className="px-4 py-0 align-middle">
-        {hasSubSleeves ? (
+    <AllocationRow
+      kind="parent"
+      label={rollup.asset_class}
+      accuracy={
+        hasSubSleeves ? (
           <span
             className="text-[10.5px] text-ink-faint"
             title={`Calculated from ${rollup.sub_class_count} policy sub-sleeves below.`}
@@ -792,61 +798,16 @@ function ParentRow({
             priority={100}
             preliminary={single.preliminary}
           />
-        ) : null}
-      </td>
-      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink">
-        {fmtPct(rollup.target_pct)}
-      </td>
-      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-muted">
-        {range ?? "—"}
-      </td>
-      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-muted">
-        {rollup.actual_pct != null ? fmtPct(rollup.actual_pct) : "—"}
-      </td>
-      <td className="px-4 py-0 align-middle text-right">
-        {gapPct != null ? (
-          <Extrapolated method="target% − actual%">
-            <span
-              className={
-                "num tabular-nums font-medium " +
-                (tone === "positive"
-                  ? "text-green-700 dark:text-green-400"
-                  : tone === "negative"
-                  ? "text-red-700 dark:text-red-400"
-                  : "text-ink-muted")
-              }
-            >
-              {gapPct > 0 ? "+" : ""}
-              {fmtPct(gapPct)}
-            </span>
-          </Extrapolated>
-        ) : (
-          <span className="text-ink-faint">—</span>
-        )}
-      </td>
-      <td className="px-4 py-0 align-middle text-right">
-        {gapUsd != null ? (
-          <Extrapolated method="gap(pp) ÷ 100 × plan AUM">
-            <span
-              className={
-                "num tabular-nums " +
-                (gapUsd > 0
-                  ? "text-green-700 dark:text-green-400"
-                  : gapUsd < 0
-                  ? "text-red-700 dark:text-red-400"
-                  : "text-ink-muted")
-              }
-            >
-              {gapUsd > 0 ? "+" : gapUsd < 0 ? "−" : ""}
-              {formatUSD(Math.abs(gapUsd))}
-            </span>
-          </Extrapolated>
-        ) : (
-          <span className="text-ink-faint">—</span>
-        )}
-      </td>
-      <td className="px-2 py-0 align-middle text-right">
-        {!hasSubSleeves && single ? (
+        ) : null
+      }
+      targetPct={rollup.target_pct}
+      minPct={minPct}
+      maxPct={maxPct}
+      actualPct={rollup.actual_pct}
+      totalAum={totalAum}
+      sourceQuote={single?.source_quote ?? null}
+      audit={
+        !hasSubSleeves && single ? (
           <AuditTrailTrigger
             documentId={single.source_document_id}
             sourcePage={single.source_page}
@@ -854,9 +815,9 @@ function ParentRow({
             inline
             label=""
           />
-        ) : null}
-      </td>
-    </tr>
+        ) : null
+      }
+    />
   );
 }
 
@@ -871,91 +832,32 @@ function ChildRow({
   totalAum: number | null;
   isLast: boolean;
 }) {
-  const gapPct =
-    leaf.actual_pct != null ? leaf.target_pct - leaf.actual_pct : null;
-  const gapUsd =
-    gapPct != null && totalAum
-      ? Math.round((gapPct / 100) * totalAum)
-      : null;
-  const tone =
-    gapPct == null
-      ? "neutral"
-      : gapPct > 0.5
-      ? "positive"
-      : gapPct < -0.5
-      ? "negative"
-      : "neutral";
   const connector = isLast ? "└" : "├";
   return (
-    <tr
-      className="h-10 border-b border-line last:border-b-0 odd:bg-black/[0.01] dark:odd:bg-white/[0.015]"
-      title={leaf.source_quote ?? undefined}
-    >
-      <td className="px-4 py-0 align-middle">
+    <AllocationRow
+      kind="child"
+      label={
         <span className="inline-flex items-center gap-1.5 text-[12.5px] text-ink-muted">
           <span aria-hidden className="text-ink-faint pl-3 font-mono">
             {connector}
           </span>
           {leaf.sub_class ?? leaf.asset_class}
         </span>
-      </td>
-      <td className="px-4 py-0 align-middle">
+      }
+      accuracy={
         <ConfidenceBadge
           confidence={leaf.confidence}
           priority={100}
           preliminary={leaf.preliminary}
         />
-      </td>
-      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-muted">
-        {fmtPct(leaf.target_pct)}
-      </td>
-      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-faint">
-        {leaf.target_min_pct != null && leaf.target_max_pct != null
-          ? `${fmtPct(leaf.target_min_pct)} – ${fmtPct(leaf.target_max_pct)}`
-          : "—"}
-      </td>
-      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-faint">
-        {leaf.actual_pct != null ? fmtPct(leaf.actual_pct) : "—"}
-      </td>
-      <td className="px-4 py-0 align-middle text-right">
-        {gapPct != null ? (
-          <span
-            className={
-              "num tabular-nums " +
-              (tone === "positive"
-                ? "text-green-700 dark:text-green-400"
-                : tone === "negative"
-                ? "text-red-700 dark:text-red-400"
-                : "text-ink-faint")
-            }
-          >
-            {gapPct > 0 ? "+" : ""}
-            {fmtPct(gapPct)}
-          </span>
-        ) : (
-          <span className="text-ink-faint">—</span>
-        )}
-      </td>
-      <td className="px-4 py-0 align-middle text-right">
-        {gapUsd != null ? (
-          <span
-            className={
-              "num tabular-nums " +
-              (gapUsd > 0
-                ? "text-green-700 dark:text-green-400"
-                : gapUsd < 0
-                ? "text-red-700 dark:text-red-400"
-                : "text-ink-faint")
-            }
-          >
-            {gapUsd > 0 ? "+" : gapUsd < 0 ? "−" : ""}
-            {formatUSD(Math.abs(gapUsd))}
-          </span>
-        ) : (
-          <span className="text-ink-faint">—</span>
-        )}
-      </td>
-      <td className="px-2 py-0 align-middle text-right">
+      }
+      targetPct={leaf.target_pct}
+      minPct={leaf.target_min_pct}
+      maxPct={leaf.target_max_pct}
+      actualPct={leaf.actual_pct}
+      totalAum={totalAum}
+      sourceQuote={leaf.source_quote}
+      audit={
         <AuditTrailTrigger
           documentId={leaf.source_document_id}
           sourcePage={leaf.source_page}
@@ -963,8 +865,204 @@ function ChildRow({
           inline
           label=""
         />
+      }
+    />
+  );
+}
+
+// Shared row renderer. Picks range-aware classification when a policy band
+// is present + actual is populated; falls back to (target - actual) when
+// only a point target exists. Within-range allocations render the band
+// position instead of a misleading "+/-pp" gap, and the $ gap is omitted
+// because the band itself endorses the position.
+function AllocationRow({
+  kind,
+  label,
+  accuracy,
+  targetPct,
+  minPct,
+  maxPct,
+  actualPct,
+  totalAum,
+  sourceQuote,
+  audit,
+}: {
+  kind: "parent" | "child";
+  label: React.ReactNode;
+  accuracy: React.ReactNode;
+  targetPct: number;
+  minPct: number | null;
+  maxPct: number | null;
+  actualPct: number | null;
+  totalAum: number | null;
+  sourceQuote: string | null;
+  audit: React.ReactNode;
+}) {
+  const hasRange = minPct != null && maxPct != null;
+  const classification =
+    actualPct != null && hasRange
+      ? classifyVsRange(actualPct, minPct!, maxPct!)
+      : null;
+  const pointGapPct =
+    actualPct != null && !hasRange ? targetPct - actualPct : null;
+
+  // $ gap: range-aware. Below band -> deployment opportunity at min.
+  // Above band -> rebalance pressure at max (rendered red but still a $
+  // figure for context). Within band -> no $ gap because policy endorses.
+  // No-range fallback uses the existing point-target math.
+  let gapUsd: number | null = null;
+  if (classification && totalAum) {
+    if (classification.kind === "below") {
+      gapUsd = Math.round((classification.gapPp / 100) * totalAum);
+    } else if (classification.kind === "above") {
+      gapUsd = -Math.round((classification.gapPp / 100) * totalAum);
+    }
+  } else if (pointGapPct != null && totalAum) {
+    gapUsd = Math.round((pointGapPct / 100) * totalAum);
+  }
+
+  const rowClass =
+    kind === "parent"
+      ? "h-11 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02]"
+      : "h-10 border-b border-line last:border-b-0 odd:bg-black/[0.01] dark:odd:bg-white/[0.015]";
+
+  const targetCls =
+    kind === "parent"
+      ? "px-4 py-0 align-middle text-right num tabular-nums text-ink"
+      : "px-4 py-0 align-middle text-right num tabular-nums text-ink-muted";
+  const rangeCls =
+    kind === "parent"
+      ? "px-4 py-0 align-middle text-right num tabular-nums text-ink-muted"
+      : "px-4 py-0 align-middle text-right num tabular-nums text-ink-faint";
+  const actualCls = rangeCls;
+  const usdMutedCls =
+    kind === "parent" ? "text-ink-muted" : "text-ink-faint";
+
+  return (
+    <tr className={rowClass} title={sourceQuote ?? undefined}>
+      <td className="px-4 py-0 align-middle text-ink">
+        {typeof label === "string" ? <span>{label}</span> : label}
       </td>
+      <td className="px-4 py-0 align-middle">{accuracy}</td>
+      <td className={targetCls}>{fmtPct(targetPct)}</td>
+      <td className={rangeCls}>
+        {hasRange ? `${fmtPct(minPct!)} – ${fmtPct(maxPct!)}` : "—"}
+      </td>
+      <td className={actualCls}>
+        {actualPct != null ? fmtPct(actualPct) : "—"}
+      </td>
+      <td className="px-4 py-0 align-middle text-right">
+        {classification ? (
+          <RangeBadge classification={classification} />
+        ) : pointGapPct != null ? (
+          <Extrapolated method="target% − actual%">
+            <span
+              className={
+                "num tabular-nums " +
+                (kind === "parent" ? "font-medium " : "") +
+                (pointGapPct > 0.5
+                  ? "text-green-700 dark:text-green-400"
+                  : pointGapPct < -0.5
+                  ? "text-red-700 dark:text-red-400"
+                  : usdMutedCls)
+              }
+            >
+              {pointGapPct > 0 ? "+" : ""}
+              {fmtPct(pointGapPct)}
+            </span>
+          </Extrapolated>
+        ) : (
+          <span className="text-ink-faint">—</span>
+        )}
+      </td>
+      <td className="px-4 py-0 align-middle text-right">
+        {gapUsd == null ? (
+          <span className="text-ink-faint">—</span>
+        ) : classification?.kind === "within" ? (
+          // Should never hit -- gapUsd is null in within. Defensive.
+          <span className="text-ink-faint">—</span>
+        ) : (
+          <Extrapolated
+            method={
+              classification
+                ? classification.kind === "below"
+                  ? "(min − actual) ÷ 100 × plan AUM"
+                  : "(actual − max) ÷ 100 × plan AUM"
+                : "gap(pp) ÷ 100 × plan AUM"
+            }
+          >
+            <span
+              className={
+                "num tabular-nums " +
+                (gapUsd > 0
+                  ? "text-green-700 dark:text-green-400"
+                  : gapUsd < 0
+                  ? "text-red-700 dark:text-red-400"
+                  : usdMutedCls)
+              }
+            >
+              {gapUsd > 0 ? "+" : gapUsd < 0 ? "−" : ""}
+              {formatUSD(Math.abs(gapUsd))}
+            </span>
+          </Extrapolated>
+        )}
+      </td>
+      <td className="px-2 py-0 align-middle text-right">{audit}</td>
     </tr>
+  );
+}
+
+function RangeBadge({
+  classification,
+}: {
+  classification: ReturnType<typeof classifyVsRange>;
+}) {
+  if (classification.kind === "below") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[11px] font-medium text-red-700 dark:text-red-400"
+        title={`Actual is ${classification.gapPp.toFixed(2)}pp below the policy minimum.`}
+      >
+        <span
+          aria-hidden
+          className="inline-block h-1.5 w-1.5 rounded-full bg-red-500"
+        />
+        below band
+        <span className="num tabular-nums text-ink-muted">
+          −{fmtPct(classification.gapPp)}
+        </span>
+      </span>
+    );
+  }
+  if (classification.kind === "above") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-400"
+        title={`Actual is ${classification.gapPp.toFixed(2)}pp above the policy maximum.`}
+      >
+        <span
+          aria-hidden
+          className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
+        />
+        above band
+        <span className="num tabular-nums text-ink-muted">
+          +{fmtPct(classification.gapPp)}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400"
+      title={`Actual sits at ${classification.positionPct.toFixed(0)}% of the policy band.`}
+    >
+      <span
+        aria-hidden
+        className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"
+      />
+      in band
+      <span className="text-ink-muted">· {bandLabel(classification.band)}</span>
+    </span>
   );
 }
 
@@ -1000,6 +1098,7 @@ function MetadataRow({
   plan,
   latestAsOf,
   website,
+  resolvedAum,
 }: {
   plan: {
     scrape_url: string | null;
@@ -1008,14 +1107,32 @@ function MetadataRow({
   };
   latestAsOf: string | null;
   website: string | null;
+  resolvedAum: ReturnType<typeof resolvePlanAum>;
 }) {
   const homeUrl = website ?? plan.scrape_url ?? null;
+  const aumLabel =
+    resolvedAum.source === "allocation"
+      ? "AUM (CAFR)"
+      : resolvedAum.source === "plan_table"
+      ? "AUM (editorial)"
+      : "AUM";
   return (
     <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-muted">
       <span>
-        AUM <span className="num tabular-nums text-ink">{formatUSD(plan.aum_usd)}</span>
+        {aumLabel}{" "}
+        <span className="num tabular-nums text-ink">
+          {formatUSD(resolvedAum.value ?? plan.aum_usd)}
+        </span>
+        {resolvedAum.source === "allocation" && resolvedAum.asOfDate ? (
+          <span className="text-ink-faint">
+            {" "}· as of{" "}
+            <span className="num tabular-nums">
+              {formatDate(resolvedAum.asOfDate)}
+            </span>
+          </span>
+        ) : null}
       </span>
-      {latestAsOf ? (
+      {latestAsOf && resolvedAum.source !== "allocation" ? (
         <span>
           Latest CAFR{" "}
           <span className="num tabular-nums text-ink">{formatDate(latestAsOf)}</span>
