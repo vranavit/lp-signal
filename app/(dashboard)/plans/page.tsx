@@ -28,7 +28,10 @@ export default async function PlansPage() {
       .select("plan_id")
       .eq("seed_data", false)
       .not("validated_at", "is", null),
-    supabase.from("pension_allocations").select("plan_id"),
+    // Rollup view: one row per (plan, asset_class). The "Allocations"
+    // column then reads as "asset classes covered" rather than raw row
+    // count inflated by sub-sleeves.
+    supabase.from("pension_allocations_rollup").select("plan_id"),
     supabase
       .from("documents")
       .select("plan_id")

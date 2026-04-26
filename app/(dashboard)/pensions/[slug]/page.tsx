@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { notFound } from "next/navigation";
@@ -17,16 +18,32 @@ import {
 import {
   privateMarketsUnfundedSummary,
   privateMarketsUnfundedUsd,
-  PRIVATE_MARKETS_CLASSES,
-  unfundedUsd,
 } from "@/lib/relevance/unfunded";
 
 export const dynamic = "force-dynamic";
 
-type Allocation = {
+// Per-asset-class summed view, one row per (plan, asset_class). Read from
+// pension_allocations_rollup. Sub-sleeves are summed; actual_pct/actual_usd
+// are NULL when any contributing sub-sleeve is target-only.
+type AllocationRollupRow = {
+  as_of_date: string;
+  asset_class: string;
+  target_pct: number;
+  actual_pct: number | null;
+  actual_usd: number | null;
+  total_plan_aum_usd: number | null;
+  preliminary: boolean;
+  sub_class_count: number;
+};
+
+// Per-row view, one row per (plan, as_of_date, asset_class, sub_class).
+// Read from pension_allocations_latest. Used for sub-sleeve children +
+// audit-trail data + per-row policy range / confidence.
+type AllocationLeafRow = {
   id: string;
   as_of_date: string;
   asset_class: string;
+  sub_class: string | null;
   target_pct: number;
   target_min_pct: number | null;
   target_max_pct: number | null;
@@ -38,6 +55,14 @@ type Allocation = {
   source_quote: string | null;
   confidence: number;
   preliminary: boolean;
+};
+
+type AllocationGroup = {
+  rollup: AllocationRollupRow;
+  // For sub_class_count > 1: every sub-sleeve under this asset_class.
+  // For sub_class_count === 1: the single underlying row, used to source
+  // policy range / confidence / audit-trail data the rollup can't expose.
+  leaves: AllocationLeafRow[];
 };
 
 export default async function PensionProfilePage({
@@ -62,27 +87,54 @@ export default async function PensionProfilePage({
   );
   if (!plan) notFound();
 
-  // Latest allocation snapshot for this plan. Sort DESC by as_of_date so the
-  // first row's date is the newest; render only that snapshot's rows.
-  const { data: allocData } = await supabase
-    .from("pension_allocations")
-    .select(
-      "id, as_of_date, asset_class, target_pct, target_min_pct, target_max_pct, actual_pct, actual_usd, total_plan_aum_usd, source_document_id, source_page, source_quote, confidence, preliminary",
-    )
-    .eq("plan_id", plan.id)
-    .order("as_of_date", { ascending: false })
-    .order("asset_class", { ascending: true });
+  // Two-view read:
+  //   - rollup view: one row per asset_class (sub-sleeves summed). Used for
+  //     parent rows + hero math + headline counts.
+  //   - latest view: every sub-sleeve from the most recent CAFR per
+  //     (plan, asset_class). Used for child rows under a sub-sleeve parent
+  //     AND as the single-row data source when sub_class_count === 1
+  //     (policy range / confidence / audit-trail data).
+  const [{ data: rollupData }, { data: leafData }] = await Promise.all([
+    supabase
+      .from("pension_allocations_rollup")
+      .select(
+        "as_of_date, asset_class, target_pct, actual_pct, actual_usd, total_plan_aum_usd, preliminary, sub_class_count",
+      )
+      .eq("plan_id", plan.id)
+      .order("asset_class", { ascending: true }),
+    supabase
+      .from("pension_allocations_latest")
+      .select(
+        "id, as_of_date, asset_class, sub_class, target_pct, target_min_pct, target_max_pct, actual_pct, actual_usd, total_plan_aum_usd, source_document_id, source_page, source_quote, confidence, preliminary",
+      )
+      .eq("plan_id", plan.id)
+      .order("asset_class", { ascending: true })
+      .order("sub_class", { ascending: true, nullsFirst: true }),
+  ]);
 
-  const rows = (allocData ?? []) as Allocation[];
-  const latestAsOf = rows[0]?.as_of_date ?? null;
-  const latest = rows.filter((r) => r.as_of_date === latestAsOf);
+  const rollupRows = (rollupData ?? []) as AllocationRollupRow[];
+  const leafRows = (leafData ?? []) as AllocationLeafRow[];
+
+  // Group leaves under their parent asset_class for the table renderer.
+  const leavesByClass = new Map<string, AllocationLeafRow[]>();
+  for (const l of leafRows) {
+    if (!leavesByClass.has(l.asset_class)) leavesByClass.set(l.asset_class, []);
+    leavesByClass.get(l.asset_class)!.push(l);
+  }
+  const groups: AllocationGroup[] = rollupRows.map((rollup) => ({
+    rollup,
+    leaves: leavesByClass.get(rollup.asset_class) ?? [],
+  }));
+
+  const latestAsOf = rollupRows[0]?.as_of_date ?? null;
   const totalAum =
-    latest.find((r) => r.total_plan_aum_usd)?.total_plan_aum_usd ?? null;
+    rollupRows.find((r) => r.total_plan_aum_usd)?.total_plan_aum_usd ?? null;
 
   // Unfunded budget = (target − actual) / 100 × AUM, capped at zero, summed
   // across private-markets asset classes. This is the cold-email headline.
-  const headlineUnfunded = privateMarketsUnfundedUsd(latest);
-  const unfundedSummary = privateMarketsUnfundedSummary(latest);
+  // Computed off the rollup view so sub-sleeves don't double-count.
+  const headlineUnfunded = privateMarketsUnfundedUsd(rollupRows);
+  const unfundedSummary = privateMarketsUnfundedSummary(rollupRows);
   // Per-class list for the hero chip strip + math modal. Non-zero gaps only;
   // target-only rows (actuals missing) are surfaced via the summary's
   // targetOnlyCount + the math modal, NOT as fake chips.
@@ -166,7 +218,7 @@ export default async function PensionProfilePage({
     .eq("processing_status", "complete");
   const dataEmpty = isEmpty({
     signals: signalsCount ?? 0,
-    allocations: latest.length,
+    allocations: rollupRows.length,
     documents: docsCount ?? 0,
   });
 
@@ -359,11 +411,11 @@ export default async function PensionProfilePage({
           sublabel="all time, accepted + preliminary"
         />
         <StatCard
-          label="Allocation rows"
-          value={String(latest.length)}
+          label="Asset classes"
+          value={String(rollupRows.length)}
           sublabel={
             latestAsOf
-              ? `${latest.length === 0 ? "none" : "classes in latest policy"}`
+              ? `${rollupRows.length === 0 ? "none" : "in latest policy"}`
               : "no CAFR ingested"
           }
         />
@@ -400,12 +452,12 @@ export default async function PensionProfilePage({
           ) : null}
         </div>
 
-        {latest.length === 0 ? (
+        {groups.length === 0 ? (
           <div className="px-4 py-6 text-center text-[12px] text-ink-muted">
             Ingest this plan&apos;s CAFR to populate allocation data.
           </div>
         ) : (
-          <AllocationTable rows={latest} totalAum={totalAum} />
+          <AllocationTable groups={groups} totalAum={totalAum} />
         )}
       </section>
 
@@ -631,10 +683,10 @@ export default async function PensionProfilePage({
 }
 
 function AllocationTable({
-  rows,
+  groups,
   totalAum,
 }: {
-  rows: Allocation[];
+  groups: AllocationGroup[];
   totalAum: number | null;
 }) {
   return (
@@ -653,105 +705,266 @@ function AllocationTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => {
-            const gapPct =
-              r.actual_pct != null ? r.target_pct - r.actual_pct : null;
-            const gapUsd =
-              gapPct != null && totalAum
-                ? Math.round((gapPct / 100) * totalAum)
-                : null;
-            const tone =
-              gapPct == null
-                ? "neutral"
-                : gapPct > 0.5
-                ? "positive"
-                : gapPct < -0.5
-                ? "negative"
-                : "neutral";
+          {groups.map((g) => {
+            const hasSubSleeves = g.rollup.sub_class_count > 1;
+            const single = !hasSubSleeves ? g.leaves[0] ?? null : null;
             return (
-              <tr
-                key={r.id}
-                className="h-11 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02]"
-                title={r.source_quote ?? undefined}
-              >
-                <td className="px-4 py-0 align-middle text-ink">
-                  <span>{r.asset_class}</span>
-                </td>
-                <td className="px-4 py-0 align-middle">
-                  <ConfidenceBadge
-                    confidence={r.confidence}
-                    priority={100}
-                    preliminary={r.preliminary}
-                  />
-                </td>
-                <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink">
-                  {fmtPct(r.target_pct)}
-                </td>
-                <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-muted">
-                  {r.target_min_pct != null && r.target_max_pct != null
-                    ? `${fmtPct(r.target_min_pct)} – ${fmtPct(r.target_max_pct)}`
-                    : "—"}
-                </td>
-                <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-muted">
-                  {r.actual_pct != null ? fmtPct(r.actual_pct) : "—"}
-                </td>
-                <td className="px-4 py-0 align-middle text-right">
-                  {gapPct != null ? (
-                    <Extrapolated method="target% − actual%">
-                      <span
-                        className={
-                          "num tabular-nums font-medium " +
-                          (tone === "positive"
-                            ? "text-green-700 dark:text-green-400"
-                            : tone === "negative"
-                            ? "text-red-700 dark:text-red-400"
-                            : "text-ink-muted")
-                        }
-                      >
-                        {gapPct > 0 ? "+" : ""}
-                        {fmtPct(gapPct)}
-                      </span>
-                    </Extrapolated>
-                  ) : (
-                    <span className="text-ink-faint">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-0 align-middle text-right">
-                  {gapUsd != null ? (
-                    <Extrapolated method="gap(pp) ÷ 100 × plan AUM">
-                      <span
-                        className={
-                          "num tabular-nums " +
-                          (gapUsd > 0
-                            ? "text-green-700 dark:text-green-400"
-                            : gapUsd < 0
-                            ? "text-red-700 dark:text-red-400"
-                            : "text-ink-muted")
-                        }
-                      >
-                        {gapUsd > 0 ? "+" : gapUsd < 0 ? "−" : ""}
-                        {formatUSD(Math.abs(gapUsd))}
-                      </span>
-                    </Extrapolated>
-                  ) : (
-                    <span className="text-ink-faint">—</span>
-                  )}
-                </td>
-                <td className="px-2 py-0 align-middle text-right">
-                  <AuditTrailTrigger
-                    documentId={r.source_document_id}
-                    sourcePage={r.source_page}
-                    sourceQuote={r.source_quote}
-                    inline
-                    label=""
-                  />
-                </td>
-              </tr>
+              <Fragment key={g.rollup.asset_class}>
+                <ParentRow
+                  rollup={g.rollup}
+                  single={single}
+                  totalAum={totalAum}
+                  hasSubSleeves={hasSubSleeves}
+                />
+                {hasSubSleeves
+                  ? g.leaves.map((leaf, idx) => (
+                      <ChildRow
+                        key={leaf.id}
+                        leaf={leaf}
+                        totalAum={totalAum}
+                        isLast={idx === g.leaves.length - 1}
+                      />
+                    ))
+                  : null}
+              </Fragment>
             );
           })}
         </tbody>
       </table>
     </div>
+  );
+}
+
+// Parent row. Always visible. Reads target/actual/AUM from the rollup view
+// so target-only NULL semantics are preserved (rollup's bool_and guard
+// already returns NULL whenever ANY contributing sub-sleeve is target-only).
+function ParentRow({
+  rollup,
+  single,
+  totalAum,
+  hasSubSleeves,
+}: {
+  rollup: AllocationRollupRow;
+  single: AllocationLeafRow | null;
+  totalAum: number | null;
+  hasSubSleeves: boolean;
+}) {
+  const gapPct =
+    rollup.actual_pct != null ? rollup.target_pct - rollup.actual_pct : null;
+  const gapUsd =
+    gapPct != null && totalAum
+      ? Math.round((gapPct / 100) * totalAum)
+      : null;
+  const tone =
+    gapPct == null
+      ? "neutral"
+      : gapPct > 0.5
+      ? "positive"
+      : gapPct < -0.5
+      ? "negative"
+      : "neutral";
+  const range =
+    !hasSubSleeves &&
+    single &&
+    single.target_min_pct != null &&
+    single.target_max_pct != null
+      ? `${fmtPct(single.target_min_pct)} – ${fmtPct(single.target_max_pct)}`
+      : null;
+  return (
+    <tr
+      className="h-11 border-b border-line last:border-b-0 odd:bg-black/[0.015] dark:odd:bg-white/[0.02]"
+      title={single?.source_quote ?? undefined}
+    >
+      <td className="px-4 py-0 align-middle text-ink">
+        <span>{rollup.asset_class}</span>
+      </td>
+      <td className="px-4 py-0 align-middle">
+        {hasSubSleeves ? (
+          <span
+            className="text-[10.5px] text-ink-faint"
+            title={`Calculated from ${rollup.sub_class_count} policy sub-sleeves below.`}
+          >
+            Σ {rollup.sub_class_count} sleeves
+          </span>
+        ) : single ? (
+          <ConfidenceBadge
+            confidence={single.confidence}
+            priority={100}
+            preliminary={single.preliminary}
+          />
+        ) : null}
+      </td>
+      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink">
+        {fmtPct(rollup.target_pct)}
+      </td>
+      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-muted">
+        {range ?? "—"}
+      </td>
+      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-muted">
+        {rollup.actual_pct != null ? fmtPct(rollup.actual_pct) : "—"}
+      </td>
+      <td className="px-4 py-0 align-middle text-right">
+        {gapPct != null ? (
+          <Extrapolated method="target% − actual%">
+            <span
+              className={
+                "num tabular-nums font-medium " +
+                (tone === "positive"
+                  ? "text-green-700 dark:text-green-400"
+                  : tone === "negative"
+                  ? "text-red-700 dark:text-red-400"
+                  : "text-ink-muted")
+              }
+            >
+              {gapPct > 0 ? "+" : ""}
+              {fmtPct(gapPct)}
+            </span>
+          </Extrapolated>
+        ) : (
+          <span className="text-ink-faint">—</span>
+        )}
+      </td>
+      <td className="px-4 py-0 align-middle text-right">
+        {gapUsd != null ? (
+          <Extrapolated method="gap(pp) ÷ 100 × plan AUM">
+            <span
+              className={
+                "num tabular-nums " +
+                (gapUsd > 0
+                  ? "text-green-700 dark:text-green-400"
+                  : gapUsd < 0
+                  ? "text-red-700 dark:text-red-400"
+                  : "text-ink-muted")
+              }
+            >
+              {gapUsd > 0 ? "+" : gapUsd < 0 ? "−" : ""}
+              {formatUSD(Math.abs(gapUsd))}
+            </span>
+          </Extrapolated>
+        ) : (
+          <span className="text-ink-faint">—</span>
+        )}
+      </td>
+      <td className="px-2 py-0 align-middle text-right">
+        {!hasSubSleeves && single ? (
+          <AuditTrailTrigger
+            documentId={single.source_document_id}
+            sourcePage={single.source_page}
+            sourceQuote={single.source_quote}
+            inline
+            label=""
+          />
+        ) : null}
+      </td>
+    </tr>
+  );
+}
+
+// Indented sub-sleeve row. Only rendered when the parent has > 1 sleeves.
+// Each leaf carries its own confidence, range, and source quote.
+function ChildRow({
+  leaf,
+  totalAum,
+  isLast,
+}: {
+  leaf: AllocationLeafRow;
+  totalAum: number | null;
+  isLast: boolean;
+}) {
+  const gapPct =
+    leaf.actual_pct != null ? leaf.target_pct - leaf.actual_pct : null;
+  const gapUsd =
+    gapPct != null && totalAum
+      ? Math.round((gapPct / 100) * totalAum)
+      : null;
+  const tone =
+    gapPct == null
+      ? "neutral"
+      : gapPct > 0.5
+      ? "positive"
+      : gapPct < -0.5
+      ? "negative"
+      : "neutral";
+  const connector = isLast ? "└" : "├";
+  return (
+    <tr
+      className="h-10 border-b border-line last:border-b-0 odd:bg-black/[0.01] dark:odd:bg-white/[0.015]"
+      title={leaf.source_quote ?? undefined}
+    >
+      <td className="px-4 py-0 align-middle">
+        <span className="inline-flex items-center gap-1.5 text-[12.5px] text-ink-muted">
+          <span aria-hidden className="text-ink-faint pl-3 font-mono">
+            {connector}
+          </span>
+          {leaf.sub_class ?? leaf.asset_class}
+        </span>
+      </td>
+      <td className="px-4 py-0 align-middle">
+        <ConfidenceBadge
+          confidence={leaf.confidence}
+          priority={100}
+          preliminary={leaf.preliminary}
+        />
+      </td>
+      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-muted">
+        {fmtPct(leaf.target_pct)}
+      </td>
+      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-faint">
+        {leaf.target_min_pct != null && leaf.target_max_pct != null
+          ? `${fmtPct(leaf.target_min_pct)} – ${fmtPct(leaf.target_max_pct)}`
+          : "—"}
+      </td>
+      <td className="px-4 py-0 align-middle text-right num tabular-nums text-ink-faint">
+        {leaf.actual_pct != null ? fmtPct(leaf.actual_pct) : "—"}
+      </td>
+      <td className="px-4 py-0 align-middle text-right">
+        {gapPct != null ? (
+          <span
+            className={
+              "num tabular-nums " +
+              (tone === "positive"
+                ? "text-green-700 dark:text-green-400"
+                : tone === "negative"
+                ? "text-red-700 dark:text-red-400"
+                : "text-ink-faint")
+            }
+          >
+            {gapPct > 0 ? "+" : ""}
+            {fmtPct(gapPct)}
+          </span>
+        ) : (
+          <span className="text-ink-faint">—</span>
+        )}
+      </td>
+      <td className="px-4 py-0 align-middle text-right">
+        {gapUsd != null ? (
+          <span
+            className={
+              "num tabular-nums " +
+              (gapUsd > 0
+                ? "text-green-700 dark:text-green-400"
+                : gapUsd < 0
+                ? "text-red-700 dark:text-red-400"
+                : "text-ink-faint")
+            }
+          >
+            {gapUsd > 0 ? "+" : gapUsd < 0 ? "−" : ""}
+            {formatUSD(Math.abs(gapUsd))}
+          </span>
+        ) : (
+          <span className="text-ink-faint">—</span>
+        )}
+      </td>
+      <td className="px-2 py-0 align-middle text-right">
+        <AuditTrailTrigger
+          documentId={leaf.source_document_id}
+          sourcePage={leaf.source_page}
+          sourceQuote={leaf.source_quote}
+          inline
+          label=""
+        />
+      </td>
+    </tr>
   );
 }
 

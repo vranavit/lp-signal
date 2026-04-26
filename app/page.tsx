@@ -93,13 +93,17 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
     // PRIM). Signals alone excludes allocations-only plans (TRS Texas,
     // Wisconsin SWIB, TRS Illinois). See session-2 diagnostic for the gap
     // analysis.
+    //
+    // Reads the rollup view so sub-sleeve sub-sleeve duplicates (NYSTRS
+    // Public Equity Domestic + International, etc.) collapse to one row
+    // per (plan, asset_class) and the headline math is honest.
     const [
       { data: allocRows, error: allocErr },
       { count: signalsCount, error: signalsErr },
       { data: signalPlanRows, error: signalPlansErr },
     ] = await Promise.all([
       supabase
-        .from("pension_allocations")
+        .from("pension_allocations_rollup")
         .select(
           "plan_id, asset_class, target_pct, actual_pct, total_plan_aum_usd, as_of_date",
         ),
@@ -137,10 +141,9 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
     let pensionsWithActuals = 0;
     let pensionsTargetOnly = 0;
     for (const list of byPlan.values()) {
-      list.sort((a, b) => b.as_of_date.localeCompare(a.as_of_date));
-      const latestDate = list[0].as_of_date;
-      const latest = list.filter((r) => r.as_of_date === latestDate);
-      const pm = latest.filter((r) => PM.has(r.asset_class));
+      // Rollup view already returns the latest snapshot per (plan,
+      // asset_class) — no JS-side filtering needed.
+      const pm = list.filter((r) => PM.has(r.asset_class));
       // Completeness: a plan is "with actuals" only if every PM row in its
       // latest snapshot has actual_pct set. One NULL tips it to "target
       // only" so the caption can't overstate coverage.
@@ -149,7 +152,7 @@ async function loadLiveStats(supabase: SupabaseClient): Promise<LiveStats> {
         if (anyActualMissing) pensionsTargetOnly++;
         else pensionsWithActuals++;
       }
-      for (const r of latest) {
+      for (const r of list) {
         if (r.actual_pct == null || r.total_plan_aum_usd == null) continue;
         const gap = Number(r.target_pct) - Number(r.actual_pct);
         if (gap <= 0) continue;
@@ -190,13 +193,14 @@ async function loadCalstrsUnderweight(
     .eq("name", "CalSTRS")
     .maybeSingle();
   if (!plan) return { top3: [], unfundedPmTotal: 0 };
+  // Rollup view returns one row per (plan, asset_class) from the latest
+  // CAFR snapshot, so sub-sleeves don't duplicate the underweight ranking.
   const { data } = await supabase
-    .from("pension_allocations")
+    .from("pension_allocations_rollup")
     .select(
       "asset_class, target_pct, actual_pct, total_plan_aum_usd, as_of_date",
     )
-    .eq("plan_id", plan.id)
-    .order("as_of_date", { ascending: false });
+    .eq("plan_id", plan.id);
   const rows = (data ?? []) as Array<{
     asset_class: string;
     target_pct: number;
@@ -205,10 +209,8 @@ async function loadCalstrsUnderweight(
     as_of_date: string;
   }>;
   if (rows.length === 0) return { top3: [], unfundedPmTotal: 0 };
-  const latestDate = rows[0].as_of_date;
-  const latest = rows.filter((r) => r.as_of_date === latestDate);
-  const unfundedPmTotal = privateMarketsUnfundedUsd(latest);
-  const underweight = latest
+  const unfundedPmTotal = privateMarketsUnfundedUsd(rows);
+  const underweight = rows
     .filter((r) => r.actual_pct != null && r.total_plan_aum_usd != null)
     .map((r) => {
       const gap = Number(r.target_pct) - Number(r.actual_pct!);
@@ -350,8 +352,8 @@ async function loadPipelineCounts(
       .eq("seed_data", false)
       .not("validated_at", "is", null),
     supabase
-      .from("pension_allocations")
-      .select("id", { count: "exact", head: true }),
+      .from("pension_allocations_rollup")
+      .select("plan_id", { count: "exact", head: true }),
     supabase
       .from("allocation_policy_changes")
       .select("id", { count: "exact", head: true }),
@@ -367,8 +369,10 @@ async function loadPipelineCounts(
 async function loadOutreachPreview(
   supabase: SupabaseClient,
 ): Promise<OutreachPreviewRow[]> {
+  // Rollup view: one row per (plan, asset_class) from the latest snapshot.
+  // No JS-side latest-date filtering needed; sub-sleeves can't double-count.
   const { data } = await supabase
-    .from("pension_allocations")
+    .from("pension_allocations_rollup")
     .select(
       "plan_id, asset_class, target_pct, actual_pct, total_plan_aum_usd, as_of_date, plan:plans(id, name, country, scrape_config)",
     )
@@ -394,22 +398,19 @@ async function loadOutreachPreview(
   }
   const out: OutreachPreviewRow[] = [];
   for (const [, list] of byPlan) {
-    list.sort((a, b) => b.as_of_date.localeCompare(a.as_of_date));
-    const latestDate = list[0].as_of_date;
-    const latest = list.filter((r) => r.as_of_date === latestDate);
-    const total = privateMarketsUnfundedUsd(latest);
-    if (total <= 0 || !latest[0].plan) continue;
+    const total = privateMarketsUnfundedUsd(list);
+    if (total <= 0 || !list[0].plan) continue;
     const slug =
-      typeof latest[0].plan.scrape_config === "object" &&
-      latest[0].plan.scrape_config
-        ? ((latest[0].plan.scrape_config as Record<string, unknown>).key as
+      typeof list[0].plan.scrape_config === "object" &&
+      list[0].plan.scrape_config
+        ? ((list[0].plan.scrape_config as Record<string, unknown>).key as
             | string
             | undefined) ?? null
         : null;
     out.push({
-      plan_id: latest[0].plan.id,
-      plan_name: latest[0].plan.name,
-      country: latest[0].plan.country,
+      plan_id: list[0].plan.id,
+      plan_name: list[0].plan.name,
+      country: list[0].plan.country,
       unfunded_usd: total,
       slug,
     });

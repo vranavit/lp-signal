@@ -51,10 +51,11 @@ export default async function OutreachPage() {
     (r) => r.plan != null,
   );
 
-  // Compute unfunded budget per plan from the latest pension_allocations
-  // snapshot. Server-side so the outreach UI can filter without paginating.
+  // Compute unfunded budget per plan from the rollup view (one row per
+  // (plan, asset_class) at the latest snapshot, sub-sleeves summed).
+  // Server-side so the outreach UI can filter without paginating.
   const { data: allocs } = await supabase
-    .from("pension_allocations")
+    .from("pension_allocations_rollup")
     .select(
       "plan_id, asset_class, target_pct, actual_pct, total_plan_aum_usd, as_of_date, plan:plans(id, name, country, scrape_config)",
     )
@@ -77,9 +78,8 @@ export default async function OutreachPage() {
 
   const allocList = (allocs ?? []) as unknown as AllocRow[];
 
-  // For each plan, take the most recent as_of_date snapshot and compute
-  // private-markets unfunded budget. Anything ≤ 0 (no underweight in PE/
-  // Infra/Credit/RE/VC) is omitted from the table.
+  // Group by plan and compute private-markets unfunded budget. Anything
+  // ≤ 0 (no underweight in PE/Infra/Credit/RE/VC) is omitted.
   const byPlan = new Map<string, AllocRow[]>();
   for (const a of allocList) {
     if (!byPlan.has(a.plan_id)) byPlan.set(a.plan_id, []);
@@ -87,24 +87,21 @@ export default async function OutreachPage() {
   }
   const planUnfunded: PlanUnfundedRow[] = [];
   for (const [, list] of byPlan) {
-    list.sort((a, b) => b.as_of_date.localeCompare(a.as_of_date));
-    const latestDate = list[0].as_of_date;
-    const latest = list.filter((r) => r.as_of_date === latestDate);
-    const total = privateMarketsUnfundedUsd(latest);
-    if (total <= 0 || !latest[0].plan) continue;
+    const total = privateMarketsUnfundedUsd(list);
+    if (total <= 0 || !list[0].plan) continue;
     const slug =
-      typeof latest[0].plan.scrape_config === "object" &&
-      latest[0].plan.scrape_config
-        ? ((latest[0].plan.scrape_config as Record<string, unknown>).key as
+      typeof list[0].plan.scrape_config === "object" &&
+      list[0].plan.scrape_config
+        ? ((list[0].plan.scrape_config as Record<string, unknown>).key as
             | string
             | undefined) ?? null
         : null;
     planUnfunded.push({
-      plan_id: latest[0].plan.id,
-      plan_name: latest[0].plan.name,
-      country: latest[0].plan.country,
+      plan_id: list[0].plan.id,
+      plan_name: list[0].plan.name,
+      country: list[0].plan.country,
       slug,
-      as_of_date: latestDate,
+      as_of_date: list[0].as_of_date,
       unfunded_usd: total,
     });
   }
