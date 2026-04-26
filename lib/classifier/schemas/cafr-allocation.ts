@@ -52,26 +52,44 @@ const coercedPositiveInt = z.union([
   stringToIntOrNull(1),
 ]);
 
-const allocationSchema = z.object({
-  asset_class: assetClassEnum,
-  // v1.1-cafr: sub-sleeve label when the policy table distinguishes
-  // policy targets inside a class (not when it lists implementation
-  // sub-strategies like Buyout/Growth/Secondaries within PE).
-  sub_class: z.string().min(1).max(120).nullable().optional(),
-  // Allocation percentages can legitimately be negative — e.g. VRS
-  // FY2025 reports a cash / leverage offset row that nets against
-  // positive exposures elsewhere (the classifier emits target_pct /
-  // actual_pct = negative for those). Bound at -100 so we still reject
-  // obviously-broken extractions.
-  target_pct: z.number().min(-100).max(100),
-  target_min_pct: z.number().min(-100).max(100).nullable().optional(),
-  target_max_pct: z.number().min(-100).max(100).nullable().optional(),
-  actual_pct: z.number().min(-100).max(100).nullable().optional(),
-  actual_usd: coercedInt.nullable().optional(),
-  source_page: z.number().int().min(1),
-  source_quote: z.string().min(1),
-  confidence: z.number().min(0).max(1),
-});
+const allocationSchema = z
+  .object({
+    asset_class: assetClassEnum,
+    // v1.1-cafr: sub-sleeve label when the policy table distinguishes
+    // policy targets inside a class (not when it lists implementation
+    // sub-strategies like Buyout/Growth/Secondaries within PE).
+    sub_class: z.string().min(1).max(120).nullable().optional(),
+    // Allocation percentages can legitimately be negative — e.g. VRS
+    // FY2025 reports a cash / leverage offset row that nets against
+    // positive exposures elsewhere (the classifier emits target_pct /
+    // actual_pct = negative for those). Bound at -100 so we still reject
+    // obviously-broken extractions.
+    //
+    // v1.3-cafr: target_pct is nullable. Some sources (NCRS quarterly
+    // investment report, CalPERS monthly transaction report) publish
+    // actuals only and reference the IPS as the canonical target source.
+    // Actual-only emission is gated in the prompt — the classifier must
+    // see an explicit cross-reference ("see Investment Policy Statement",
+    // "per IPS section X") before emitting target_pct=null. The schema
+    // additionally enforces that at least one of (target_pct, actual_pct)
+    // is non-null so we never persist data-free rows.
+    target_pct: z.number().min(-100).max(100).nullable().optional(),
+    target_min_pct: z.number().min(-100).max(100).nullable().optional(),
+    target_max_pct: z.number().min(-100).max(100).nullable().optional(),
+    actual_pct: z.number().min(-100).max(100).nullable().optional(),
+    actual_usd: coercedInt.nullable().optional(),
+    source_page: z.number().int().min(1),
+    source_quote: z.string().min(1),
+    confidence: z.number().min(0).max(1),
+  })
+  .refine(
+    (a) => a.target_pct != null || a.actual_pct != null,
+    {
+      message:
+        "allocation must populate at least one of target_pct or actual_pct (v1.3-cafr: actual-only is allowed when the source explicitly references the IPS for targets)",
+      path: ["target_pct"],
+    },
+  );
 
 export const cafrAllocationResponseSchema = z.object({
   allocations: z.array(allocationSchema).default([]),
@@ -107,11 +125,11 @@ export const recordAllocationsToolSchema: Tool = {
                 "Sub-sleeve label within asset_class, verbatim from the policy table, when the table gives multiple policy targets inside one asset class (e.g. 'Domestic' / 'International' / 'Emerging Markets' under Public Equity; 'Risk Mitigating Strategies' / 'Collaborative Strategies' under CalSTRS Other; 'TIPS' under Fixed Income). Null when the class is a single undivided policy row.",
             },
             target_pct: {
-              type: "number",
+              type: ["number", "null"],
               minimum: -100,
               maximum: 100,
               description:
-                "Target allocation percentage (typically 0-100; may be negative for cash/leverage offset rows that net against positive exposures). If only a range is given, use the midpoint.",
+                "Target allocation percentage (typically 0-100; may be negative for cash/leverage offset rows). If only a range is given, use the midpoint. v1.3-cafr: may be null when the source explicitly references the IPS for targets (e.g. NCRS quarterly investment report). At least one of target_pct or actual_pct must be non-null.",
             },
             target_min_pct: {
               type: "number",
@@ -126,11 +144,11 @@ export const recordAllocationsToolSchema: Tool = {
               description: "Policy range maximum, if stated. null otherwise.",
             },
             actual_pct: {
-              type: "number",
+              type: ["number", "null"],
               minimum: -100,
               maximum: 100,
               description:
-                "Actual allocation as of the fiscal year end, if shown alongside the target. Negative values are valid for cash/leverage offset rows.",
+                "Actual allocation percentage as of the fiscal year end (or quarter end for quarterly reports). v1.2-cafr: pulled from the Investment Section actuals table — does NOT need to be in the same table as the target. Sources, in order: (a) explicit Actual % column, (b) prose form, (c) computed as round(actual_usd/total_plan_aum_usd*100, 1). Negative values valid for leverage offsets.",
             },
             actual_usd: {
               type: "integer",
@@ -151,7 +169,6 @@ export const recordAllocationsToolSchema: Tool = {
           },
           required: [
             "asset_class",
-            "target_pct",
             "source_page",
             "source_quote",
             "confidence",

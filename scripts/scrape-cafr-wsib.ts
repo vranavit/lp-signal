@@ -1,14 +1,30 @@
 /**
- * Ingest the most recent WSIB annual report.
- * URL pattern: https://www.sib.wa.gov/docs/reports/annual/ar{YY}.pdf
- * Latest:      ar25.pdf (10.5 MB, FY ending June 30 2025).
+ * Ingest the most recent WSIB quarterly investment report.
+ *
+ * Updated 2026-04-26 (Phase-3 Round 2 of the actuals-gap sprint): switched
+ * from the WSIB Annual Report (ar25.pdf, 10.0 MB, 234 pp) to the Q2 2025
+ * Quarterly Investment Report (qr063025.pdf, 0.84 MB, 25 pp). The Annual
+ * Report carries only target narrative; the quarterly report's p.4 has a
+ * clean CTF table with Market Value $ + Actual % + Range for all 7 asset
+ * classes. See docs/audits/actuals-gap-phase1-2026-04-26.md.
+ *
+ * The classifier handles quarterly reports the same as annual ACFRs — same
+ * target+actual table structure, just a quarter-end as-of date instead of
+ * fiscal-year-end. The "fiscalYearEnd" arg name is retained but interpreted
+ * as the snapshot date.
+ *
+ * Run scripts/replace-allocation-source.ts --plan-name="Washington State
+ * Investment Board" first to drop the prior Annual-Report document + its 7
+ * target-only allocation rows.
+ *
+ * URL pattern: sib.wa.gov/docs/reports/quarterly/qrMMDDYY.pdf
  */
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ingestCafr } from "@/lib/scrapers/cafr";
 
-const CAFR_URL = "https://www.sib.wa.gov/docs/reports/annual/ar25.pdf";
-const FISCAL_YEAR_END = "2025-06-30"; // Washington state FY ends June 30.
+const CAFR_URL = "https://www.sib.wa.gov/docs/reports/quarterly/qr063025.pdf";
+const FISCAL_YEAR_END = "2025-06-30"; // Q2 2025 quarter end.
 
 async function main() {
   const supabase = createSupabaseAdminClient();

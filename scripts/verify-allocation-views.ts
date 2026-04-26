@@ -197,7 +197,10 @@ async function main() {
       }> = [
         { plan: "Michigan SMRS", asset_class: "Public Equity", expectTarget: 40, expectActual: 35.7 },
         { plan: "LACERA", asset_class: "Fixed Income", expectTarget: 18, expectActual: 17.4 },
-        { plan: "Ohio PERS", asset_class: "Fixed Income", expectTarget: 24, expectActual: null },
+        // Ohio PERS Fixed Income actuals landed in v1.2-cafr re-classify
+        // (Phase-3 Round 1, Apr 2026): $26.78B Defined Benefit Fixed Income /
+        // $103.15B AUM = 25.9%. The pre-v1.2 row was target-only.
+        { plan: "Ohio PERS", asset_class: "Fixed Income", expectTarget: 24, expectActual: 25.9 },
         { plan: "CalSTRS", asset_class: "Other", expectTarget: 10, expectActual: 9.1 },
       ];
       for (const tc of cases) {
@@ -233,6 +236,36 @@ async function main() {
             ? undefined
             : `got target=${fmt(got.target_pct)} actual=${fmt(got.actual_pct)}`,
         );
+      }
+    }
+
+    // -------------------------------------------------------------------
+    // Check 6: every pension_allocations row has at least one of
+    // (target_pct, actual_pct) non-null. Mirrors the Zod refine added in
+    // v1.3-cafr. Catches rows that snuck in via direct DB writes / older
+    // prompt versions that didn't enforce the constraint.
+    // -------------------------------------------------------------------
+    {
+      const { rows } = await c.query<Row>(`
+        select pa.id, p.name as plan_name, pa.asset_class, pa.sub_class, pa.as_of_date, pa.prompt_version
+        from public.pension_allocations pa
+        join public.plans p on p.id = pa.plan_id
+        where pa.target_pct is null and pa.actual_pct is null
+        order by p.name, pa.asset_class, pa.sub_class
+      `);
+      if (rows.length === 0) {
+        log("Check 6: every row has at least one of target_pct or actual_pct non-null", true);
+      } else {
+        log(
+          "Check 6: every row has at least one of target_pct or actual_pct non-null",
+          false,
+          `${rows.length} data-free row(s):`,
+        );
+        for (const r of rows) {
+          console.log(
+            `        ${fmt(r.plan_name)} / ${fmt(r.asset_class)}${r.sub_class ? ` · ${fmt(r.sub_class)}` : ""} (${fmt(r.as_of_date)}, ${fmt(r.prompt_version)}) id=${fmt(r.id)}`,
+          );
+        }
       }
     }
 
