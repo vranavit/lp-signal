@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   Activity,
   Building2,
+  Search,
   Send,
   Settings as SettingsIcon,
 } from "lucide-react";
@@ -15,6 +16,7 @@ type NavItem = {
 
 const baseItems: NavItem[] = [
   { href: "/signals", label: "Signals", Icon: Activity },
+  { href: "/explore", label: "Explore", Icon: Search },
   { href: "/plans", label: "Plans", Icon: Building2 },
   { href: "/settings", label: "Settings", Icon: SettingsIcon },
 ];

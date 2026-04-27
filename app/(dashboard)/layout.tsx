@@ -33,6 +33,8 @@ export default async function DashboardLayout({
       ? "/settings"
       : pathname.startsWith("/outreach")
       ? "/outreach"
+      : pathname.startsWith("/explore")
+      ? "/explore"
       : "/signals";
 
   return (
