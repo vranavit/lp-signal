@@ -169,7 +169,7 @@ export function ExploreFilters({
               onChange={(e) =>
                 setState((s) => ({ ...s, fromDate: e.target.value || null }))
               }
-              className="h-8 px-2 text-[12px] bg-bg border border-line rounded-sm text-ink"
+              className="h-8 px-2 text-[12px] bg-bg border border-line rounded-sm text-ink focus-visible:outline-none focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
             />
             <span className="text-[11px] text-ink-faint">to</span>
             <input
@@ -178,7 +178,7 @@ export function ExploreFilters({
               onChange={(e) =>
                 setState((s) => ({ ...s, toDate: e.target.value || null }))
               }
-              className="h-8 px-2 text-[12px] bg-bg border border-line rounded-sm text-ink"
+              className="h-8 px-2 text-[12px] bg-bg border border-line rounded-sm text-ink focus-visible:outline-none focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
             />
           </div>
         ) : null}
@@ -193,7 +193,7 @@ export function ExploreFilters({
             onChange={(e) =>
               setState((s) => ({ ...s, minAmount: parseMillions(e.target.value) }))
             }
-            className="h-8 w-[80px] px-2 text-[12px] bg-bg border border-line rounded-sm text-ink num tabular-nums focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+            className="h-8 w-[80px] px-2 text-[12px] bg-bg border border-line rounded-sm text-ink num tabular-nums focus-visible:outline-none focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
           />
           <span className="text-[11px] text-ink-faint">M</span>
         </div>
@@ -208,7 +208,7 @@ export function ExploreFilters({
             onChange={(e) =>
               setState((s) => ({ ...s, maxAmount: parseMillions(e.target.value) }))
             }
-            className="h-8 w-[80px] px-2 text-[12px] bg-bg border border-line rounded-sm text-ink num tabular-nums focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+            className="h-8 w-[80px] px-2 text-[12px] bg-bg border border-line rounded-sm text-ink num tabular-nums focus-visible:outline-none focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
           />
           <span className="text-[11px] text-ink-faint">M</span>
         </div>
@@ -223,7 +223,7 @@ export function ExploreFilters({
             value={draftQuery}
             onChange={(e) => setDraftQuery(e.target.value)}
             placeholder="Search GP or fund name"
-            className="h-8 w-full pl-8 pr-7 text-[13px] bg-bg border border-line rounded-sm text-ink placeholder:text-ink-dim focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-colors duration-150"
+            className="h-8 w-full pl-8 pr-7 text-[13px] bg-bg border border-line rounded-sm text-ink placeholder:text-ink-dim focus-visible:outline-none focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg transition-colors duration-150"
           />
           {draftQuery ? (
             <button
@@ -272,6 +272,7 @@ function MultiSelect({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
+  const active = value.length > 0;
   const selectedLabel =
     value.length === 0
       ? "all"
@@ -284,11 +285,28 @@ function MultiSelect({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="h-8 w-full px-2.5 inline-flex items-center justify-between gap-2 bg-bg border border-line rounded-sm text-[12.5px] text-ink hover:border-line-strong transition-colors duration-150"
+        aria-expanded={open}
+        className={
+          "h-8 w-full px-2.5 inline-flex items-center justify-between gap-2 bg-bg rounded-sm text-[12.5px] transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg " +
+          (open || active
+            ? "border border-line-strong text-ink"
+            : "border border-line text-ink-muted hover:border-line-strong")
+        }
       >
         <span className="text-ink-faint">{label}:</span>
         <span className="flex-1 text-left truncate text-ink">{selectedLabel}</span>
-        <ChevronDown className="h-3.5 w-3.5 text-ink-faint" strokeWidth={1.75} />
+        {active ? (
+          <span className="font-mono tabular-nums text-[10.5px] bg-accent/10 text-accent-hi border border-accent/30 rounded-sm px-1">
+            {value.length}
+          </span>
+        ) : null}
+        <ChevronDown
+          className={
+            "h-3.5 w-3.5 text-ink-faint transition-transform duration-150 " +
+            (open ? "rotate-180" : "")
+          }
+          strokeWidth={1.75}
+        />
       </button>
       {open ? (
         <div className="absolute z-20 mt-1 w-[max(100%,260px)] bg-bg-panel border border-line rounded-sm shadow-md max-h-[320px] overflow-auto">
@@ -351,7 +369,7 @@ function SingleSelect({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-8 w-full pl-2.5 pr-7 appearance-none bg-bg border border-line rounded-sm text-[12.5px] text-ink hover:border-line-strong transition-colors duration-150"
+        className="h-8 w-full pl-2.5 pr-7 appearance-none bg-bg border border-line rounded-sm text-[12.5px] text-ink hover:border-line-strong transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:border-line-strong focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>

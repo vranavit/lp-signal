@@ -68,7 +68,7 @@ function StatCard({
       <button
         type="button"
         onClick={onClick}
-        className="card-surface group px-3 py-2.5 text-left hover:border-line-strong hover:bg-bg-hover transition-colors duration-150 cursor-pointer"
+        className="card-surface group px-3 py-2.5 text-left hover:border-line-strong hover:bg-bg-hover transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
       >
         {Inner}
       </button>

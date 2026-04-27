@@ -1,4 +1,3 @@
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/sidebar";
@@ -24,26 +23,17 @@ export default async function DashboardLayout({
     adminEmails.has((user.email ?? "").toLowerCase()) ||
     userProfile?.role === "admin";
 
-  const h = headers();
-  const pathname = h.get("x-invoke-path") ?? h.get("next-url") ?? "/signals";
-  const active =
-    pathname.startsWith("/plans")
-      ? "/plans"
-      : pathname.startsWith("/settings")
-      ? "/settings"
-      : pathname.startsWith("/outreach")
-      ? "/outreach"
-      : pathname.startsWith("/explore")
-      ? "/explore"
-      : "/signals";
+  // Sidebar reads the active route via usePathname() in a client component.
+  // Earlier this layout tried to read x-invoke-path / next-url HTTP headers
+  // and fall back to "/signals" when neither was set; both headers are
+  // unreliable in app-router server layouts (no middleware sets next-url, and
+  // x-invoke-path is internal Next.js plumbing) so the cascade fell through
+  // to "/signals" on every request, hard-pinning the active state. Moved the
+  // logic into the client.
 
   return (
     <div className="min-h-screen bg-bg text-ink">
-      <Sidebar
-        active={active}
-        userEmail={user.email ?? null}
-        isAdmin={isAdmin}
-      />
+      <Sidebar userEmail={user.email ?? null} isAdmin={isAdmin} />
       <main className="pl-[200px]">
         <div className="px-6 py-6">{children}</div>
       </main>

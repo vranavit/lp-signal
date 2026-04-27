@@ -285,7 +285,7 @@ export function OutreachWorkspace({
                       {p.slug ? (
                         <Link
                           href={`/pensions/${p.slug}`}
-                          className="hover:text-accent-hi hover:underline"
+                          className="hover:text-accent-hi hover:underline rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
                         >
                           {p.plan_name}
                         </Link>
@@ -468,7 +468,7 @@ export function OutreachWorkspace({
                             href={r.document.source_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-[11.5px] text-accent-hi hover:underline"
+                            className="text-[11.5px] text-accent-hi hover:underline rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
                           >
                             link
                           </a>

@@ -67,7 +67,7 @@ export function CombinationFilter({
                 setState((s) => ({ ...s, query: e.target.value }))
               }
               placeholder="Search signals, plans, or managers"
-              className="h-8 w-full pl-8 pr-2.5 text-[13px] bg-bg border border-line rounded-sm text-ink placeholder:text-ink-dim focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-colors duration-150"
+              className="h-8 w-full pl-8 pr-2.5 text-[13px] bg-bg border border-line rounded-sm text-ink placeholder:text-ink-dim focus-visible:outline-none focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg transition-colors duration-150"
             />
           </div>
         ) : null}
@@ -283,12 +283,13 @@ function MultiSelect({
       <button
         type="button"
         onClick={() => setOpen((x) => !x)}
+        aria-expanded={open}
         className={
-          "h-8 pl-2.5 pr-2 text-[13px] bg-bg border border-line rounded-sm inline-flex items-center gap-2 cursor-pointer hover:border-line-strong " +
-          (selected.length > 0
-            ? "text-ink"
-            : "text-ink-muted") +
-          " focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+          "h-8 pl-2.5 pr-2 text-[13px] bg-bg rounded-sm inline-flex items-center gap-2 cursor-pointer transition-colors duration-150 " +
+          (open || selected.length > 0
+            ? "border border-line-strong text-ink"
+            : "border border-line text-ink-muted hover:border-line-strong") +
+          " focus-visible:outline-none focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
         }
       >
         <span className="truncate max-w-[160px]">{summary}</span>
@@ -297,7 +298,13 @@ function MultiSelect({
             {selected.length}
           </span>
         ) : null}
-        <ChevronDown className="h-3.5 w-3.5 text-ink-faint" strokeWidth={1.75} />
+        <ChevronDown
+          className={
+            "h-3.5 w-3.5 text-ink-faint transition-transform duration-150 " +
+            (open ? "rotate-180" : "")
+          }
+          strokeWidth={1.75}
+        />
       </button>
       {open ? (
         <div
@@ -390,7 +397,7 @@ function SingleSelect({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-8 pl-2.5 pr-7 text-[13px] bg-bg border border-line rounded-sm appearance-none cursor-pointer text-ink hover:border-line-strong focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-colors duration-150"
+        className="h-8 pl-2.5 pr-7 text-[13px] bg-bg border border-line rounded-sm appearance-none cursor-pointer text-ink hover:border-line-strong focus-visible:outline-none focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg transition-colors duration-150"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -439,13 +446,22 @@ function RangeSelect({
       <button
         type="button"
         onClick={() => setOpen((x) => !x)}
+        aria-expanded={open}
         className={
-          "h-8 pl-2.5 pr-2 text-[13px] bg-bg border border-line rounded-sm inline-flex items-center gap-2 cursor-pointer hover:border-line-strong focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 " +
-          (active ? "text-ink" : "text-ink-muted")
+          "h-8 pl-2.5 pr-2 text-[13px] bg-bg rounded-sm inline-flex items-center gap-2 cursor-pointer transition-colors duration-150 focus-visible:outline-none focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg " +
+          (open || active
+            ? "border border-line-strong text-ink"
+            : "border border-line text-ink-muted hover:border-line-strong")
         }
       >
         <span className="truncate max-w-[180px]">{summary}</span>
-        <ChevronDown className="h-3.5 w-3.5 text-ink-faint" strokeWidth={1.75} />
+        <ChevronDown
+          className={
+            "h-3.5 w-3.5 text-ink-faint transition-transform duration-150 " +
+            (open ? "rotate-180" : "")
+          }
+          strokeWidth={1.75}
+        />
       </button>
       {open ? (
         <div className="absolute z-30 mt-1 p-3 bg-bg-subtle border border-line rounded-sm shadow-lg w-[260px]">

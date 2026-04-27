@@ -171,14 +171,14 @@ function RowGroup({
         className={
           "h-10 border-b border-line cursor-pointer transition-colors duration-150 " +
           (expanded
-            ? "bg-bg-hover"
+            ? "bg-accent/5 outline outline-1 -outline-offset-1 outline-accent/40"
             : "odd:bg-black/[0.015] dark:odd:bg-white/[0.02] hover:bg-bg-hover")
         }
       >
         <td className="px-3 align-middle">
           <div className="flex items-center gap-1.5">
             {expanded ? (
-              <ChevronDown className="h-3 w-3 text-ink-faint" strokeWidth={2} />
+              <ChevronDown className="h-3 w-3 text-accent" strokeWidth={2} />
             ) : (
               <ChevronRight className="h-3 w-3 text-ink-faint" strokeWidth={2} />
             )}
@@ -217,7 +217,7 @@ function RowGroup({
         </td>
       </tr>
       {expanded ? (
-        <tr className="bg-bg-hover border-b border-line">
+        <tr className="bg-accent/5 border-b border-line">
           <td colSpan={7} className="px-4 py-3">
             <ExpandedDetail row={row} typeKey={typeKey} />
           </td>
@@ -279,7 +279,7 @@ function ExpandedDetail({
             href={row.document.source_url}
             target="_blank"
             rel="noreferrer"
-            className="text-[12px] text-accent-hi hover:underline"
+            className="text-[12px] text-accent-hi hover:underline rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg"
           >
             ↗ Open source document
           </a>
@@ -305,27 +305,31 @@ function SortTh({
   alignRight?: boolean;
 }) {
   const active = sort === col;
-  const Icon = !active ? ChevronUp : dir === "asc" ? ChevronUp : ChevronDown;
+  const Icon = dir === "asc" ? ChevronUp : ChevronDown;
   return (
     <th
       className={
-        "font-normal text-[12px] text-ink-faint px-3 h-9 bg-bg-subtle " +
+        "font-normal text-[12px] px-3 h-9 bg-bg-subtle " +
+        (active ? "text-ink" : "text-ink-faint") +
+        " " +
         (alignRight ? "text-right" : "text-left")
       }
     >
       <button
         type="button"
         onClick={() => onClick(col)}
+        aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
         className={
-          "inline-flex items-center gap-1 hover:text-ink transition-colors duration-150 " +
+          "inline-flex items-center gap-1 transition-colors duration-150 cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg " +
+          (active ? "text-ink font-medium" : "text-ink-faint hover:text-ink") +
+          " " +
           (alignRight ? "ml-auto" : "")
         }
       >
         <span>{label}</span>
-        <Icon
-          className={"h-3 w-3 " + (active ? "text-ink" : "text-ink-faint/40")}
-          strokeWidth={2}
-        />
+        {active ? (
+          <Icon className="h-3 w-3 text-ink" strokeWidth={2} />
+        ) : null}
       </button>
     </th>
   );
