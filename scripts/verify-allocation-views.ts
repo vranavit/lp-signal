@@ -240,6 +240,51 @@ async function main() {
     }
 
     // -------------------------------------------------------------------
+    // Check 7: no duplicate-natural-key T1 commitment signal rows.
+    //
+    // After the dedupe sprint (Phase-3, Apr 2026) added migration
+    // 20260501000015's unique partial index on
+    //   (plan_id, fields->>'gp', fields->>'fund_name',
+    //    commitment_amount_usd, coalesce(fields->>'approval_date', '__null__'))
+    // this should always be zero in steady state. The check guards against
+    // direct DB writes that bypass the index (e.g. ad-hoc SQL), or
+    // accidental drops of the index.
+    // -------------------------------------------------------------------
+    {
+      const { rows } = await c.query<Row>(`
+        select plan_id,
+               fields->>'gp' as gp,
+               fields->>'fund_name' as fund_name,
+               commitment_amount_usd,
+               fields->>'approval_date' as approval_date,
+               count(*)::int as n,
+               array_agg(id) as ids
+        from public.signals
+        where signal_type = 1 and seed_data = false
+        group by plan_id,
+                 fields->>'gp',
+                 fields->>'fund_name',
+                 commitment_amount_usd,
+                 coalesce(fields->>'approval_date', '__null__')
+        having count(*) > 1
+      `);
+      if (rows.length === 0) {
+        log("Check 7: no duplicate-natural-key T1 commitment signal rows", true);
+      } else {
+        log(
+          "Check 7: no duplicate-natural-key T1 commitment signal rows",
+          false,
+          `${rows.length} duplicate group(s):`,
+        );
+        for (const r of rows) {
+          console.log(
+            `        plan=${fmt(r.plan_id)} gp=${fmt(r.gp)} fund=${fmt(r.fund_name)} amount=${fmt(r.commitment_amount_usd)} approval=${fmt(r.approval_date)} n=${fmt(r.n)} ids=${fmt(r.ids)}`,
+          );
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------
     // Check 6: every pension_allocations row has at least one of
     // (target_pct, actual_pct) non-null. Mirrors the Zod refine added in
     // v1.3-cafr. Catches rows that snuck in via direct DB writes / older

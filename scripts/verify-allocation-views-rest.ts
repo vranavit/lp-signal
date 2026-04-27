@@ -233,6 +233,49 @@ async function main() {
     }
   }
 
+  // Check 7: no duplicate-natural-key T1 commitment signal rows.
+  // Mirrors the unique partial index on signals (migration 20260501000015).
+  {
+    type T1Row = {
+      id: string;
+      plan_id: string;
+      signal_type: number;
+      fields: Record<string, unknown> | null;
+      commitment_amount_usd: number | null;
+      seed_data: boolean | null;
+    };
+    const allRows = await fetchAll<T1Row>(
+      supabase,
+      "signals",
+      "id, plan_id, signal_type, fields, commitment_amount_usd, seed_data",
+    );
+    const t1 = allRows.filter((r) => r.signal_type === 1);
+    const groups = new Map<string, string[]>();
+    for (const r of t1) {
+      if (r.seed_data) continue;
+      const f = (r.fields ?? {}) as Record<string, unknown>;
+      const gp = typeof f["gp"] === "string" ? (f["gp"] as string) : "";
+      const fund = typeof f["fund_name"] === "string" ? (f["fund_name"] as string) : "";
+      const approval = typeof f["approval_date"] === "string" ? (f["approval_date"] as string) : "__null__";
+      const key = [r.plan_id, gp, fund, r.commitment_amount_usd ?? "null", approval].join("|");
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(r.id);
+    }
+    const dupes = Array.from(groups.entries()).filter(([, ids]) => ids.length > 1);
+    if (dupes.length === 0) {
+      log("Check 7: no duplicate-natural-key T1 commitment signal rows", true);
+    } else {
+      log(
+        "Check 7: no duplicate-natural-key T1 commitment signal rows",
+        false,
+        `${dupes.length} duplicate group(s):`,
+      );
+      for (const [k, ids] of dupes.slice(0, 20)) {
+        console.log(`        ${k} -- ids=${ids.join(",")}`);
+      }
+    }
+  }
+
   // Check 6: every pension_allocations row has at least one of (target_pct, actual_pct) non-null.
   {
     type RawRow = {

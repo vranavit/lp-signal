@@ -418,13 +418,45 @@ export async function classifyDocument(
       signalRows.push(row);
     }
 
+    // Split T1 rows from T2/T3 because T1 has a unique partial index
+    // (signals_t1_natural_key_idx, migration 20260501000015) that can fire
+    // when the same commitment is mentioned in multiple source documents.
+    // We insert T1 rows one at a time and treat unique-violation (PostgreSQL
+    // error 23505) as a silent skip — the natural-key dedup is intentional.
+    // T2 / T3 rows have no such index and stay on the batch path.
     let insertedCount = 0;
+    let t1Skipped = 0;
     if (signalRows.length > 0) {
-      const { error: insErr, count } = await supabase
-        .from("signals")
-        .insert(signalRows, { count: "exact" });
-      if (insErr) throw new Error(`signal_insert_failed: ${insErr.message}`);
-      insertedCount = count ?? signalRows.length;
+      const t1Rows = signalRows.filter((r) => r.signal_type === 1);
+      const otherRows = signalRows.filter((r) => r.signal_type !== 1);
+
+      for (const row of t1Rows) {
+        const { error: insErr } = await supabase.from("signals").insert(row);
+        if (insErr) {
+          // Postgres error code 23505 = unique_violation. Surfaces in
+          // PostgREST as { code: '23505', ... }.
+          if (insErr.code === "23505") {
+            t1Skipped++;
+            continue;
+          }
+          throw new Error(`signal_insert_failed: ${insErr.message}`);
+        }
+        insertedCount++;
+      }
+
+      if (otherRows.length > 0) {
+        const { error: insErr, count } = await supabase
+          .from("signals")
+          .insert(otherRows, { count: "exact" });
+        if (insErr) throw new Error(`signal_insert_failed: ${insErr.message}`);
+        insertedCount += count ?? otherRows.length;
+      }
+
+      if (t1Skipped > 0) {
+        console.log(
+          `[classifier] doc=${doc.id} skipped ${t1Skipped} T1 row(s) on natural-key conflict (already captured from another document)`,
+        );
+      }
     }
 
     if (rejectedRows.length > 0) {
