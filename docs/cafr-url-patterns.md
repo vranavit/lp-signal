@@ -3,10 +3,27 @@
 Established 2026-04-27 as Phase 1 of PR 2 (Wave 1 adapters) under
 sub-project B (CAFR auto-ingestion). One section per plan that the
 weekly `/api/cron/scrape-cafr` heartbeat will auto-ingest, plus the
-year-discovery strategy each adapter needs to implement.
+year-discovery strategy each adapter implements.
 
-PR 2 Phase 2 will turn each section here into a concrete TypeScript
-adapter under `lib/scrapers/cafr-adapters/`.
+- **PR 2 (Wave 1, 5 adapters)**: shipped 2026-04-27 as commit
+  `190aef3`. NYSCRF, Minnesota SBI, TRS Illinois, NJ DOI, MA PRIM.
+- **PR 3 (Wave 2a, 9 adapters)**: documented below alongside Wave 1.
+  CalPERS, Ohio PERS, PA PSERS, LACERA, Oregon PERS, VRS (single
+  year-encoded); Michigan SMRS (WordPress publish-folder); NCRS
+  and WSIB (quarterly snapshot).
+- **PR 3.5 (Wave 2b, 1 adapter)**: deferred. CalSTRS uses an opaque
+  Drupal hash in its CAFR URL - needs an HTML-scrape adapter shape
+  not yet built.
+
+A few notes on what the existing Wave 1 docs below describe vs what
+shipped: the 15-month FYE recency filter was extended to 24 months
+during PR 2 design (NJ DOI's 12-18 month publish lag would have
+rejected legitimately-fresh ACFRs). The "Path A" landing-page
+heartbeat tightening described in some Wave 1 sections was rejected
+in favor of "Path B": the adapter probe IS the change-detection
+signal. PR 4 will refactor `/api/cron/scrape-cafr` to call adapters
+directly via the `CAFR_ADAPTERS` registry rather than hashing landing
+pages.
 
 ## What an adapter has to do
 
@@ -24,8 +41,8 @@ Per the architecture refinements approved before PR 2:
 - **Cap at 1 CAFR per plan per heartbeat run.** As soon as one
   candidate returns a fresh PDF, stop probing. No double-pulls of
   year-N + year-N-1 in the same run.
-- **15-month FYE recency filter.** Reject any candidate URL whose
-  encoded fiscal-year-end is older than (today minus 15 months).
+- **24-month FYE recency filter.** Reject any candidate URL whose
+  encoded fiscal-year-end is older than (today minus 24 months).
   Stops the adapter from happily re-ingesting a 2018 ACFR if the
   pattern accidentally matches.
 - **Probe budget.** Cap candidate URL probes at 24 per plan per run.
@@ -34,8 +51,8 @@ Per the architecture refinements approved before PR 2:
 - **Failure escalation.** First failure on a plan: normal log entry.
   Second consecutive: HIGH PRIORITY in the digest. Third
   consecutive: write to the `broken_adapters` log and skip this
-  plan on subsequent runs until manually re-enabled. (Implemented
-  in PR 4, not PR 2.)
+  plan on subsequent runs until manually re-enabled. Implemented
+  in PR 4.
 
 ## Wave 1 plans
 
@@ -79,9 +96,10 @@ Probe count: 1 to 2.
 (verified back to FY2022). The osc.ny.gov host serves PDFs without
 bot-blocking.
 
-**Earliest acceptable FYE under the 15-month filter:**
-`today() - 15 months`. On 2026-04-27 the cutoff is 2025-01-27, so
-FY2025 (FYE 2025-03-31) is the earliest year that passes.
+**Earliest acceptable FYE under the 24-month filter:**
+`today() - 24 months`. On 2026-04-27 the cutoff is 2024-04-27.
+FY2024 (FYE 2024-03-31) fails by 27 days; FY2025 (FYE 2025-03-31)
+passes by 11 months.
 
 ---
 
@@ -137,9 +155,9 @@ canonical form is `{FY_YYYY}%20MSBI%20Annual%20Report.pdf`. If
 that fails, try `{FY_YYYY}%20Annual%20Report.pdf` as a backup
 filename per probed month.
 
-**Earliest acceptable FYE under the 15-month filter:**
-On 2026-04-27 the cutoff is 2025-01-27. FY2024 (FYE 2024-06-30)
-fails (older than the cutoff). FY2025 (2025-06-30) passes.
+**Earliest acceptable FYE under the 24-month filter:**
+On 2026-04-27 the cutoff is 2024-04-27. FY2024 (FYE 2024-06-30)
+passes by ~2 months; FY2025 (2025-06-30) passes comfortably.
 
 ---
 
@@ -188,8 +206,8 @@ Probe count: 2 to 6.
   `key='trs_illinois'` so the heartbeat dispatcher can resolve
   the plan consistently.
 
-**Earliest acceptable FYE under the 15-month filter:** Same as
-MSBI - on 2026-04-27, FY2025 passes, FY2024 fails.
+**Earliest acceptable FYE under the 24-month filter:** Same as
+MSBI - on 2026-04-27, both FY2024 and FY2025 pass the filter.
 
 ---
 
@@ -245,15 +263,17 @@ Probe count: 1 to 3.
   `AnnualReportforFiscalYear{YYYY}` (camelCase, no separator).
   Stable across multiple years.
 
-**Earliest acceptable FYE under the 15-month filter:** Cutoff on
-2026-04-27 is 2025-01-27. FY2024 (2024-06-30) fails the filter -
-but it's already ingested, and the adapter's job is to pull
-what's NEW, not re-ingest old. The 15-month filter is a
-defense-in-depth check; the adapter will simply find no
-qualifying URL on most runs until NJ DOI publishes FY2025.
+**Earliest acceptable FYE under the 24-month filter:** Cutoff on
+2026-04-27 is 2024-04-27. FY2024 (2024-06-30) passes by ~2 months;
+FY2023 (2023-06-30) fails. NJ DOI's 12-18 month publish lag was
+specifically the binding constraint that pushed the recency filter
+from 15 to 24 months during PR 2 design - at 15 months, FY2024
+would have failed and we could have been blocked from re-ingesting
+the most recent published ACFR.
 
-This is the canonical case where "adapter found nothing" is the
-correct outcome for many months.
+This is also the canonical case where "adapter found nothing" is
+the correct outcome for many runs in a row, until FY2025 publishes
+sometime in 2026.
 
 ---
 
@@ -313,13 +333,398 @@ Probe count: 1 to 12, capped at 24.
 - WordPress upload folder structure (`{YYYY}/{MM}/`) is stable -
   PRIM has used the same WP install for 5+ years.
 
-**Earliest acceptable FYE under the 15-month filter:** On
-2026-04-27 the cutoff is 2025-01-27. FY2025 (2025-06-30) passes;
-FY2024 (2024-06-30) fails. FY2025 already ingested as of the
+**Earliest acceptable FYE under the 24-month filter:** On
+2026-04-27 the cutoff is 2024-04-27. Both FY2024 (2024-06-30) and
+FY2025 (2025-06-30) pass. FY2025 already ingested as of the
 manual run, so first auto-ingest hit will be FY2026 around
 Dec 2026.
 
 ---
+
+## Wave 2a plans
+
+9 plans whose CAFR URLs are predictable from calendar date alone (no
+HTML scrape needed). Documented after Wave 1 because they reuse the
+same adapter shapes - most slot directly into the patterns shipped
+in PR 2. Grouped below by pattern shape rather than alphabetically.
+
+### Group A - Single year-encoded URL (6 plans)
+
+Same shape as Wave 1's NYSCRF: one `{YYYY}` (or `{YY}` / `fy{YYYY}`)
+substitution into a stable URL template. Two probes per run (today's
+year, prior year), future-FYE filter applies, ~1-2 candidates emitted
+per run after the filter.
+
+#### 6. CalPERS
+
+- **Plan key:** `calpers`
+- **Manual fallback script:** `scripts/scrape-cafr-calpers.ts`
+- **Fiscal year end:** June 30
+- **File size:** 30.4 MB raw (FY2025 ACFR). Routes through Anthropic's
+  Files API path (already shipped in commit `2dc1d09`) because
+  base64 inflation pushes it past the 32 MB inline ceiling. The
+  adapter just emits the URL; ingestCafr handles the size routing.
+- **Latest known PDF (FY2025):** `https://www.calpers.ca.gov/documents/acfr-2025/download?inline`
+
+**URL pattern:**
+
+```
+https://www.calpers.ca.gov/documents/acfr-{YYYY}/download?inline
+```
+
+`{YYYY}` is the calendar year of the FYE. The `/download?inline`
+suffix is constant.
+
+**Year-discovery strategy:** today.year first, today.year - 1
+fallback. Skip any year whose FYE is in the future. Same
+implementation as NYSCRF.
+
+**Quirks:** The query string `?inline` is part of the canonical URL
+and required. Stripping it returns a different (login-gated)
+response. The adapter's URL must include it verbatim.
+
+#### 7. Ohio PERS
+
+- **Plan key:** `ohio_pers`
+- **Manual fallback script:** `scripts/scrape-cafr-ohio-pers.ts`
+- **Fiscal year end:** December 31 (Ohio PERS uses calendar-year FY)
+- **File size:** 16.3 MB (FY2024 Annual Report, 250+ pages)
+- **Latest known PDF (FY2024):** `https://www.opers.org/pubs-archive/financial/2024-OPERS-Annual-Report.pdf`
+
+**URL pattern:**
+
+```
+https://www.opers.org/pubs-archive/financial/{YYYY}-OPERS-Annual-Report.pdf
+```
+
+`{YYYY}` is the calendar year of the FYE.
+
+**Year-discovery strategy:** today.year first, today.year - 1
+fallback. Publish lag is 3-4 months after Dec 31 FYE - so on
+April 27 2026, FY2025 (FYE 2025-12-31) should be published; FY2026
+hasn't ended. The future-FYE filter drops FY2026 cleanly; one
+probe to FY2025 typically resolves.
+
+**Quirks:** None notable. Stable URL pattern verified back to
+FY2020 in the `pubs-archive/financial/` directory.
+
+#### 8. PA PSERS
+
+- **Plan key:** `pa_psers`
+- **Manual fallback script:** `scripts/scrape-cafr-psers.ts`
+- **Fiscal year end:** June 30
+- **File size:** 1.9 MB, ~170 pages (FY2025)
+- **Latest known PDF (FY2025):** `https://www.pa.gov/content/dam/copapwp-pagov/en/psers/documents/transparency/financial-reports/acfr/psers%20acfr%20fy2025.pdf`
+
+**URL pattern:**
+
+```
+https://www.pa.gov/content/dam/copapwp-pagov/en/psers/documents/transparency/financial-reports/acfr/psers%20acfr%20fy{YYYY}.pdf
+```
+
+`{YYYY}` is the calendar year of the FYE. The `fy{YYYY}` token
+uses lowercase `fy`.
+
+**Year-discovery strategy:** today.year first, today.year - 1
+fallback. Same as NYSCRF.
+
+**Quirks:**
+
+- URL-encoded spaces (`%20`) inside the filename. Don't double-
+  encode when constructing the URL.
+- `pa.gov` uses a `/content/dam/copapwp-pagov/...` CMS path that
+  has been stable for at least 3 fiscal years.
+
+#### 9. LACERA
+
+- **Plan key:** `lacera`
+- **Manual fallback script:** `scripts/scrape-cafr-lacera.ts`
+- **Fiscal year end:** June 30
+- **File size:** 12.8 MB (FY2025). Comfortably under the 32 MB inline
+  ceiling.
+- **Latest known PDF (FY2025):** `https://www.lacera.gov/sites/default/files/assets/documents/annual_reports/ACFR-2025.pdf`
+
+**URL pattern:**
+
+```
+https://www.lacera.gov/sites/default/files/assets/documents/annual_reports/ACFR-{YYYY}.pdf
+```
+
+`{YYYY}` is the calendar year of the FYE.
+
+**Year-discovery strategy:** today.year first, today.year - 1
+fallback. Same as NYSCRF.
+
+**Quirks:** None notable. Stable Drupal `/sites/default/files/...`
+path. The board-minutes scraper at `lib/scrapers/lacera.ts` covers
+commitment signals; this adapter only handles the annual ACFR.
+
+#### 10. Oregon PERS
+
+- **Plan key:** `oregon_pers`
+- **Manual fallback script:** `scripts/scrape-cafr-oregon.ts`
+- **Fiscal year end:** June 30
+- **File size:** 6.9 MB, 198 pages (FY2025)
+- **Latest known PDF (FY2025):** `https://www.oregon.gov/pers/Documents/Financials/ACFR/2025-ACFR.pdf`
+
+**URL pattern:**
+
+```
+https://www.oregon.gov/pers/Documents/Financials/ACFR/{YYYY}-ACFR.pdf
+```
+
+`{YYYY}` is the calendar year of the FYE.
+
+**Year-discovery strategy:** today.year first, today.year - 1
+fallback. Same as NYSCRF.
+
+**Quirks:** Path uses initial-capital `Documents/Financials/ACFR/`
+(not all-lowercase). State of Oregon CMS preserves casing - must
+match exactly. The board-minutes scraper at `lib/scrapers/oregon.ts`
+covers commitment signals.
+
+#### 11. VRS (Virginia Retirement System)
+
+- **Plan key:** `vrs`
+- **Manual fallback script:** `scripts/scrape-cafr-vrs.ts`
+- **Fiscal year end:** June 30
+- **File size:** 3.2 MB (FY2025)
+- **Latest known PDF (FY2025):** `https://www.varetire.org/media/shared/pdf/publications/2025-annual-report.pdf`
+
+**URL pattern:**
+
+```
+https://www.varetire.org/media/shared/pdf/publications/{YYYY}-annual-report.pdf
+```
+
+`{YYYY}` is the calendar year of the FYE.
+
+**Year-discovery strategy:** today.year first, today.year - 1
+fallback. Same as NYSCRF.
+
+**Quirks:** Filename uses lowercase `annual-report` (not capital
+or "ACFR"). Stable URL pattern verified across multiple FYs. The
+board-minutes scraper at `lib/scrapers/vrs.ts` covers commitment
+signals via the wave-2 fan-out.
+
+### Group B - WordPress publish-folder + year-encoded filename (1 plan)
+
+Same shape as Wave 1's MA PRIM: WordPress upload folder
+(`{PUB_YYYY}/{PUB_MM}/`) plus year-encoded filename. The adapter
+must probe a small set of likely publish months because the publish
+folder is not derivable from FYE alone.
+
+#### 12. Michigan SMRS (MPSERS ACFR)
+
+- **Plan key:** `michigan` (existing per board-minutes scraper)
+- **Manual fallback script:** `scripts/scrape-cafr-michigan-smrs.ts`
+- **Fiscal year end:** September 30 (MPSERS state retirement system FY)
+- **File size:** 1.3 MB (FY2024)
+- **Latest known PDF (FY2024):** `https://audgen.michigan.gov/wp-content/uploads/2025/03/Fiscal-Year-2024-MPSERS-ACFR.pdf`
+
+**URL pattern:**
+
+```
+https://audgen.michigan.gov/wp-content/uploads/{PUB_YYYY}/{PUB_MM}/Fiscal-Year-{FY_YYYY}-MPSERS-ACFR.pdf
+```
+
+Three components:
+
+- `{FY_YYYY}` is the calendar year of the FYE.
+- `{PUB_YYYY}/{PUB_MM}` is the WordPress publish folder, NOT
+  derivable from FYE alone - must probe.
+
+**Year-discovery strategy:**
+
+Publish lag has been 5-6 months after the September-end FYE
+(FY2024 ended 2024-09-30, published 2025-03 - ~6 months). Probe
+order per `FY_YYYY`:
+
+1. `({FY_YYYY+1}, "03")` - canonical based on history
+2. `({FY_YYYY+1}, "02")` - earlier
+3. `({FY_YYYY+1}, "04")` - later
+4. `({FY_YYYY+1}, "01")` - much earlier
+5. `({FY_YYYY+1}, "05")` - much later
+6. `({FY_YYYY}, "12")` - very early
+
+6 candidates per `FY_YYYY` × 2 `FY_YYYY`s (today.year, today.year - 1)
+× future-FYE filter = 6-12 probes per run. On 2026-04-27, FY2026
+has ended (Sep 30 2026 is in the future, so future-FYE filter drops
+it), so the adapter emits 6 probes for FY2025.
+
+**Quirks:**
+
+- Pulled from `audgen.michigan.gov` (Office of Auditor General),
+  not `www.michigan.gov`. The www host has an Akamai bot wall that
+  blocks non-browser clients; audgen.michigan.gov serves the same
+  audited document without the wall. The adapter must use the
+  audgen host.
+- "Michigan SMRS" is the umbrella retirement-systems pool. MPSERS
+  (Public School Employees' Retirement System) is the largest plan
+  in the pool by AUM and the one Michigan publishes a dedicated
+  ACFR for. Other Michigan systems (SERS / SPRS) have their own
+  ACFRs that we do not currently ingest. Adapter targets MPSERS.
+- Filename uses hyphenated `Fiscal-Year-{FY_YYYY}-MPSERS-ACFR.pdf`
+  format with hyphens between every word. Different convention
+  from MA PRIM's `PRIT-Annual-Comprehensive-...` form.
+
+### Group C - Quarterly snapshot date (2 plans)
+
+Plans publishing quarterly investment reports (instead of or in
+addition to annual ACFRs). The adapter emits candidates for the
+most recent N quarters in newest-first order. The 24-month FYE
+filter still applies - quarter-end dates are valid YYYY-MM-DD
+values that work with the same logic.
+
+The `fiscalYearEnd` field in the CafrCandidate type is overloaded
+to "snapshot date" for these plans. Quarter-ends are 3/31, 6/30,
+9/30, 12/31. The dispatcher and ingestCafr treat the field as a
+generic as-of date, so no contract change is needed.
+
+Per design decision: **stay weekly** at the heartbeat cadence.
+6 days of max staleness on a quarterly publication is acceptable.
+Probing more frequently for these two plans would add operational
+complexity for marginal freshness gain.
+
+#### 13. NCRS (North Carolina Retirement Systems)
+
+- **Plan key:** `nc_retirement`
+- **Manual fallback script:** `scripts/scrape-cafr-ncrs.ts` (use this).
+  The older `scripts/scrape-cafr-nc-retirement.ts` targets a
+  different source and is deprecated - it will be marked
+  deprecated in a header comment as part of PR 3 Phase 2 but not
+  deleted in this PR.
+- **Snapshot cadence:** Quarterly (Q1 / Q2 / Q3 / Q4)
+- **File size:** ~1-2 MB (Q3 2025 QIR)
+- **Latest known PDF (Q3 2025):** `https://www.nctreasurer.gov/documents/files/imdiac/quarterly-investment-report-qir-2025q3/open`
+
+**URL pattern:**
+
+```
+https://www.nctreasurer.gov/documents/files/imdiac/quarterly-investment-report-qir-{YYYY}q{N}/open
+```
+
+- `{YYYY}` is the calendar year.
+- `{N}` is the quarter number (1, 2, 3, or 4).
+
+**Year-discovery strategy:**
+
+Emit candidates for the most-recent 4 calendar quarters in
+newest-first order. Skip any quarter whose end-date is in the
+future. Stop at first 200 + PDF.
+
+On 2026-04-27, the candidate sequence is:
+
+1. `{2026, q1}` - Q1 2026 (ended 2026-03-31)
+2. `{2025, q4}` - Q4 2025 (ended 2025-12-31)
+3. `{2025, q3}` - Q3 2025 (ended 2025-09-30, already ingested)
+4. `{2025, q2}` - Q2 2025 (ended 2025-06-30)
+
+4 candidates per run. Well within the 24-probe budget.
+
+**Quirks:**
+
+- Snapshot date format: quarter-end (Q1=Mar31, Q2=Jun30,
+  Q3=Sep30, Q4=Dec31). Use the calendar-quarter end, not NCRS's
+  fiscal-year boundary (NC fiscal year is July-June, but
+  quarterly reports are calendar-quarter).
+- The trailing `/open` is nctreasurer.gov's "view PDF" endpoint.
+  Stripping it returns the document landing page (HTML), not the
+  PDF. Must include `/open` verbatim.
+- The file is served as `application/pdf` via the `/open` endpoint
+  even though the URL has no `.pdf` extension. Adapter just emits
+  the URL; the dispatcher's content-type check handles it.
+
+#### 14. WSIB (Washington State Investment Board)
+
+- **Plan key:** `wsib`
+- **Manual fallback script:** `scripts/scrape-cafr-wsib.ts`
+- **Snapshot cadence:** Quarterly
+- **File size:** 0.84 MB (Q2 2025 QIR, 25 pp)
+- **Latest known PDF (Q2 2025):** `https://www.sib.wa.gov/docs/reports/quarterly/qr063025.pdf`
+
+**URL pattern:**
+
+```
+https://www.sib.wa.gov/docs/reports/quarterly/qr{MMDDYY}.pdf
+```
+
+`{MMDDYY}` is the quarter-end date encoded as 6 digits with
+2-digit year. Quarter-ends:
+
+- Q1 → MM=03, DD=31 → `033125` for Q1 2025
+- Q2 → MM=06, DD=30 → `063025` for Q2 2025
+- Q3 → MM=09, DD=30 → `093025` for Q3 2025
+- Q4 → MM=12, DD=31 → `123125` for Q4 2025
+
+**Year-discovery strategy:**
+
+Same as NCRS - emit candidates for the most-recent 4 calendar
+quarters in newest-first order. Skip any quarter whose end-date
+is in the future. Stop at first 200 + PDF.
+
+On 2026-04-27, candidate sequence is:
+
+1. `qr033126.pdf` - Q1 2026 (ended 2026-03-31)
+2. `qr123125.pdf` - Q4 2025 (ended 2025-12-31)
+3. `qr093025.pdf` - Q3 2025 (ended 2025-09-30)
+4. `qr063025.pdf` - Q2 2025 (ended 2025-06-30, already ingested)
+
+4 candidates per run.
+
+**Quirks:**
+
+- 2-digit year encoding (`25`, `26`). Risk of Y2.1K rollover at
+  year 2099. We have plenty of runway, so do not over-engineer
+  for the rollover.
+- `sib.wa.gov` (not the more common `wsib.wa.gov`) is the canonical
+  host. The adapter's URL must use `sib.wa.gov`.
+- The fiscalYearEnd field stores the quarter-end as YYYY-MM-DD
+  (e.g. `"2025-06-30"`) for the documents row's `meeting_date`
+  column, matching how the manual script writes it today.
+
+### Wave 2a-specific design notes
+
+1. **Quarterly cadence does not require new architecture.** The
+   adapter contract (`candidateUrls(today: Date) -> CafrCandidate[]`)
+   handles quarterly plans by emitting more candidates per run.
+   The 24-month FYE filter, cap-1 per run, content-hash dedup, and
+   probe budget all work identically.
+
+2. **`fiscalYearEnd` field overload.** For quarterly plans, the
+   field stores the quarter-end date rather than the fiscal-year
+   end. This is consistent with how the manual scripts already
+   write the field for NCRS and WSIB. No schema change.
+
+3. **NCRS legacy script deprecation.** PR 3 Phase 2 will add a
+   deprecated header comment to `scripts/scrape-cafr-nc-
+   retirement.ts` pointing readers at `scripts/scrape-cafr-ncrs.ts`.
+   Removal of the legacy script is deferred to a future cleanup PR.
+
+4. **Michigan SMRS host quirk.** The `audgen.michigan.gov` host is
+   the only one of the 9 Wave 2a plans that uses a non-canonical
+   primary domain. Worth noting in the adapter's docstring so
+   future maintainers don't "fix" the URL by changing the host to
+   `www.michigan.gov`, which is bot-walled.
+
+5. **NCRS / WSIB quiet-dedupe behavior under cap-1.** Quarterly
+   adapters emit 4 candidates per run, ordered newest-first. On
+   most weeks, the first 200 + PDF will be a quarter we already
+   have in storage; ingestCafr's content-hash dedup skips the
+   insert and the cap-1 rule stops further probing. This is
+   correct behavior, not a failure. PR 4's alerting layer must
+   distinguish three outcomes per adapter run:
+   - **Found new PDF, ingested** -> notify in the digest.
+   - **Found existing PDF, deduped via content-hash** -> silent.
+     This is the typical week for NCRS / WSIB.
+   - **All probes failed (HTTP 5xx, non-PDF, network error)** ->
+     count toward the failure-escalation ladder (1st normal,
+     2nd HIGH PRIORITY, 3rd writes to broken_adapters log).
+
+   "All probes returned 200 + PDF that we already had" is NOT a
+   failure for these plans. The dispatcher needs to track ingest
+   outcome (inserted vs skipped vs error) separately from probe
+   outcome (200 vs 404 vs error).
 
 ## Cross-cutting design notes for PR 2 Phase 2
 
@@ -337,7 +742,7 @@ Dec 2026.
    ```
 
    The heartbeat iterates `candidateUrls(today)`, applies the
-   15-month filter to each candidate's `fiscalYearEnd`, takes the
+   24-month filter to each candidate's `fiscalYearEnd`, takes the
    first 200 + PDF, and hands off to `ingestCafr()`.
 
 2. **Heartbeat URL tightening.** Three of the five Wave 1 plans

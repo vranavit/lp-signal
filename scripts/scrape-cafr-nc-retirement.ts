@@ -1,4 +1,18 @@
 /**
+ * DEPRECATED 2026-04-27 (PR 3, sub-project B). Use
+ * `scripts/scrape-cafr-ncrs.ts` instead. The newer script targets the
+ * NCRS Quarterly Investment Report URL pattern
+ * (`/imdiac/quarterly-investment-report-qir-{YYYY}q{N}/open`) which
+ * provides both target and actual allocations at the same granularity
+ * for the v1.2-cafr classifier. This file targets the older
+ * `/media/5216/open` legacy URL whose actuals coverage is weaker.
+ *
+ * Auto-ingestion via `lib/scrapers/cafr-adapters/nc_retirement.ts`
+ * uses the newer pattern. This script is kept for one-shot manual
+ * ingests only; removal is deferred to a future cleanup PR.
+ *
+ * Original docstring follows.
+ *
  * Unblock North Carolina Retirement Systems CAFR ingestion.
  *
  * NC has two publishing hosts today:
