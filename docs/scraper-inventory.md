@@ -44,6 +44,22 @@ Total cron count: **15** (11 scraping + 1 wave-2 fan-out + classify + 2 alerts +
 - **Colorado PERA (board minutes)** — copera.org does not publicly publish Board of Trustees meeting minutes; the Board and Leadership page lists only governance documents (strategic plan, investment policy, standing-committee assignments, trustee statements on divestment). Task C+ investigation pivoted PERA to CAFR-only ingestion via `scripts/scrape-cafr-colorado-pera.ts`; no board-minutes scraper registered.
 - **Wisconsin SWIB (allocation actuals)** — target-only by source design. The 2024 SWIB Annual Report (`swib.state.wi.us/wp-content/uploads/2026/03/2024-SWIB-Annual-Report.pdf`) explicitly states "target percentages may differ from actual monthly allocations" — the document carries policy targets and expected returns but no per-asset-class actuals. SWIB does not publish periodic actual asset class composition in any public document (the `/asset-allocation` page references a Target Benchmarks PDF and Investment Guidelines, both target-side). Allocation-actuals coverage stays target-only for SWIB until the policy posture changes; the existing `scripts/scrape-cafr-swib.ts` continues to ingest target rows for the unfunded-budget UI's "tracked with targets only" surface (per Day 9.5 H-1). Investigated in the actuals-gap sprint Phase 1 (Apr 2026) — see `docs/audits/duplicate-allocations-audit-2026-04-25.md` for the broader actuals-gap context.
 
+## CAFR auto-ingest scope
+
+`scrape_config.website` is set on all 20 active plans (PR 1 of sub-project B, 2026-04-27). The weekly `/api/cron/scrape-cafr` heartbeat hashes each landing page; PR 4 of sub-project B will wire the heartbeat to call `ingestCafr` automatically when a hash change reveals a new CAFR PDF.
+
+5 plans are flagged `scrape_config.manual_only = true` and excluded from the auto-ingest path. The heartbeat skips them; the `scraper-health-check` cron does not alert on them as stale (they remain manual responsibilities). The URL is still stored as the canonical manual fallback target the `scripts/scrape-cafr-*.ts` runners point at.
+
+| Plan | Reason | Manual fallback |
+|---|---|---|
+| Florida SBA | Akamai bot wall blocks automated fetch (HTTP 403 / 404). | `scripts/scrape-cafr-florida-sba.ts` |
+| Teacher Retirement System of Texas | Akamai bot wall blocks automated fetch. | `scripts/scrape-cafr-texas-teachers.ts` |
+| NYSTRS | nystrs.org bot-blocks HTML page fetches with HTTP 403 even when using fetchWithDefaults' Chrome-like UA + Sec-Fetch headers. The existing `lib/scrapers/nystrs.ts` works because it fetches a single stable PDF binary URL (PE_Commitments.pdf), which is not bot-walled, but no HTML index page is reachable for the heartbeat to hash. NYSTRS shifted from auto-ingest candidate to manual_only after PR 1 dry-run probe revealed the bot-block. | `scripts/scrape-cafr-nystrs.ts` (URL hardcoded; update yearly) |
+| Wisconsin SWIB | Annual report is target-only by source design. The published Annual Report has policy targets and expected returns but no per-asset-class actuals, and SWIB does not publish actual allocations in any other public document. Auto-ingesting an updated target-only CAFR adds no new value over what we already have. | `scripts/scrape-cafr-swib.ts` |
+| Colorado PERA | Board does not publicly publish Trustee meeting minutes. Colorado PERA CAFRs exceed the 32 MB inline base64 ceiling, which routes them through Anthropic's Files API via `insertOversizedCafrRow`. The auto-ingest path in PR 4 needs to handle this routing decision generically before Colorado PERA can be auto-ingested. Could be lifted in a future PR that extends the auto-ingest decision logic to detect oversized PDFs upfront and route accordingly. | `scripts/scrape-cafr-colorado-pera.ts` |
+
+15 of 20 plans are auto-ingest eligible (CalPERS, CalSTRS, NYSCRF, Michigan SMRS, NCRS, Ohio PERS, PA PSERS, TRS Illinois, WSIB, plus the 6 that already had website set: LACERA, MA PRIM, MSBI, NJ DOI, Oregon PERS, VRS).
+
 ## Fingerprint discipline
 
 Each scraper invocation updates `public.scrape_fingerprints` (keyed on `source_key`) with:
