@@ -61,7 +61,7 @@ plan_consultants rows shipped on commit f076118.
 ### Audit 4 (Schema / DB) — completed 2026-04-29
 
 - 0 P0, 1 P1, 5 P2, 1 P3
-- P4.3 (P1): No Supabase CLI migration tracking — 41 local .sql files, no `supabase_migrations.schema_migrations` table; migrations applied ad-hoc via `scripts/apply-migration.ts`. Blocks parallel dev / branch envs / onboarding.
+- ~~P4.3 (P1)~~: ~~No Supabase CLI migration tracking — 41 local .sql files, no `supabase_migrations.schema_migrations` table; migrations applied ad-hoc via `scripts/apply-migration.ts`. Blocks parallel dev / branch envs / onboarding.~~ **RESOLVED 2026-04-29**: Supabase CLI adopted, 42 migrations reconciled to tracker via `supabase migration repair --status applied`, schema invariants verified unchanged. Migrations workflow documented in `docs/migrations-workflow.md`.
 - P4.1 + P4.2 (P2): fee_period column missing on plan_consultants + code companion gap (cross-ref Audit 1 P2.7 / Audit 2 P2.3). Migration drafted in Sub-audit 4.5; backfill plan included.
 - P4.4 (P2): 5 FK columns missing indexes (pension_allocations.source_document_id, plan_consultants.source_document_id, rejected_signals.document_id, signals.document_id, user_profiles.firm_id) — performance impact grows with dataset.
 - P4.5 (P2): `gps` table is the only public table with RLS disabled; consistency gap.

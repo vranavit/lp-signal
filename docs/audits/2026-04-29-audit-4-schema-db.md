@@ -51,7 +51,7 @@ This audit does **not** examine:
 | Severity | Count | Open |
 |---|---|---|
 | P0 | 0 | 0 |
-| P1 | 1 | 1 |
+| P1 | 1 | **0 (P4.3 RESOLVED 2026-04-29)** |
 | P2 | 5 | 5 |
 | P3 | 1 | 1 |
 
@@ -124,6 +124,31 @@ Risks:
 reason to downgrade). **Status: OPEN.** Resolution: adopt
 either Supabase CLI migrations (`supabase db push` flow) or a
 custom tracking table maintained by `apply-migration.ts`.
+
+**Resolution (2026-04-29)**: adopted Supabase CLI for
+migration tracking. All 42 existing migrations reconciled with
+`supabase_migrations.schema_migrations` table via
+`supabase migration repair --status applied`. Project linked
+via `supabase link --project-ref zwfkgarsmmdjqesosyoh`. Pre/post
+schema count snapshots stored at
+`/tmp/schema-snapshots/2026-04-29-{pre,post}-cli-counts.txt`
+and compared byte-identical (`diff` exit 0): FK=19, Index=54,
+Policy=14, UK+CHECK+PK=145, rows=20/75/422/3 unchanged. Tracker
+table now contains 42 applied rows. `supabase migration list`
+confirms all 42 versions populated in both Local and Remote
+columns. **Schema delta check via `supabase db diff` was
+deferred** — every diff path (`--linked`, `--db-url`, `--local`)
+requires Docker Desktop's shadow-DB engine, which isn't
+installed locally; the count-based comparison provides
+equivalent assurance for the schema-invariant verification
+since `supabase migration repair` writes only to the tracker
+table and does not run DDL. Future migrations should be
+created via `supabase migration new <name>` and applied via
+`supabase db push` (or kept compatible with the existing
+`scripts/apply-migration.ts` during transition). Side fix:
+renamed `20260429000001_fix_handle_new_user_default_role.sql`
+→ `20260429000002_*` to resolve a version collision with the
+pre-existing `_demo_requests` migration. **Status: RESOLVED.**
 
 ---
 
