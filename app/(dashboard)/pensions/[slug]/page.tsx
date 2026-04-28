@@ -70,6 +70,19 @@ type AllocationGroup = {
   leaves: AllocationLeafRow[];
 };
 
+type ConsultantRow = {
+  id: string;
+  mandate_type: string;
+  fee_usd: string | number | null;
+  fee_year: number | null;
+  source_type: string;
+  source_url: string | null;
+  source_excerpt: string | null;
+  source_document_id: string | null;
+  consultant: { canonical_name: string; website: string | null } | null;
+  document: { source_url: string | null; meeting_date: string | null } | null;
+};
+
 export default async function PensionProfilePage({
   params,
 }: {
@@ -173,6 +186,17 @@ export default async function PensionProfilePage({
     .eq("plan_id", plan.id)
     .order("as_of_date_new", { ascending: false })
     .order("asset_class", { ascending: true });
+
+  // Investment consultants engaged by this plan, with fee + source-document
+  // data. plan_consultants.source_url is currently always NULL — the link
+  // resolves via documents.source_url joined on source_document_id.
+  const { data: consultantData } = await supabase
+    .from("plan_consultants")
+    .select(
+      "id, mandate_type, fee_usd, fee_year, source_type, source_url, source_excerpt, source_document_id, consultant:consultants(canonical_name, website), document:documents(source_url, meeting_date)",
+    )
+    .eq("plan_id", plan.id);
+  const consultantRows = (consultantData ?? []) as unknown as ConsultantRow[];
 
   // Last 6 months of transaction signals from this plan (T1/T2/T3). Shown
   // as a "Recent signals" section below the allocation table — transforms
@@ -703,6 +727,10 @@ export default async function PensionProfilePage({
           </div>
         </section>
       ) : null}
+
+      {/* Investment consultants engaged by this plan. Always renders --
+          empty state asks for tips for the 8 plans we don't yet cover. */}
+      <ConsultantsSection rows={consultantRows} />
     </div>
   );
 }
@@ -1174,5 +1202,188 @@ function Th({
     >
       {children}
     </th>
+  );
+}
+
+// Display order for mandate groups. Anything not in this list falls to the
+// bottom in alphabetical order (e.g. future "infrastructure" / "credit").
+const CONSULTANT_MANDATE_ORDER = [
+  "general",
+  "private_equity",
+  "real_estate",
+  "hedge_funds",
+] as const;
+const CONSULTANT_MANDATE_LABEL: Record<string, string> = {
+  general: "General",
+  private_equity: "Private Equity",
+  real_estate: "Real Estate",
+  hedge_funds: "Hedge Funds",
+};
+
+function ConsultantsSection({ rows }: { rows: ConsultantRow[] }) {
+  if (rows.length === 0) {
+    return (
+      <section className="card-surface">
+        <div className="px-4 py-3 border-b border-line">
+          <div className="text-[13px] font-medium text-ink">
+            Investment Consultants
+          </div>
+        </div>
+        <div className="px-6 py-10 flex flex-col items-center justify-center gap-2 text-center">
+          <div className="h-8 w-8 rounded-full bg-bg-panel border border-line flex items-center justify-center">
+            <span
+              aria-hidden
+              className="inline-block h-1.5 w-1.5 rounded-full bg-neutral-400"
+            />
+          </div>
+          <div className="text-[12.5px] text-ink-muted">
+            Consultant data not yet available for this plan.
+          </div>
+          <div className="text-[11.5px] text-ink-faint">
+            Have a tip?{" "}
+            <a
+              href="mailto:vitek@bloorcapital.com"
+              className="text-accent-hi hover:underline"
+            >
+              vitek@bloorcapital.com
+            </a>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // Subtitle: when every row carries the same source_type, surface that fact
+  // once at the section level rather than as redundant per-row badges. When
+  // mixed, fall back to a count and let per-row badges (added in a future
+  // phase) carry the source signal.
+  const sourceTypes = new Set(rows.map((r) => r.source_type));
+  const allCafr =
+    sourceTypes.size === 1 && sourceTypes.has("cafr_extraction");
+  const yearCounts = new Map<number, number>();
+  for (const r of rows) {
+    if (r.fee_year != null) {
+      yearCounts.set(r.fee_year, (yearCounts.get(r.fee_year) ?? 0) + 1);
+    }
+  }
+  let modeYear: number | null = null;
+  let modeCount = 0;
+  for (const [y, count] of yearCounts) {
+    if (count > modeCount || (count === modeCount && y > (modeYear ?? -1))) {
+      modeYear = y;
+      modeCount = count;
+    }
+  }
+  const advisorCount = new Set(
+    rows.map((r) => r.consultant?.canonical_name ?? r.id),
+  ).size;
+  const subtitle = allCafr
+    ? `${advisorCount} advisor${advisorCount === 1 ? "" : "s"}${
+        modeYear ? ` · Sourced from FY${String(modeYear).slice(-2)} CAFR` : ""
+      }`
+    : `${advisorCount} advisor${advisorCount === 1 ? "" : "s"}`;
+
+  // Group by mandate, then sort within each group: fee_year DESC primary,
+  // fee_usd DESC NULLS LAST secondary, name tiebreak. Multi-year duplicates
+  // for the same (firm, mandate) are NOT deduped -- the trajectory matters.
+  const byMandate = new Map<string, ConsultantRow[]>();
+  for (const r of rows) {
+    if (!byMandate.has(r.mandate_type)) byMandate.set(r.mandate_type, []);
+    byMandate.get(r.mandate_type)!.push(r);
+  }
+  for (const arr of byMandate.values()) {
+    arr.sort((a, b) => {
+      const ay = a.fee_year ?? -Infinity;
+      const by = b.fee_year ?? -Infinity;
+      if (ay !== by) return by - ay;
+      const af = a.fee_usd != null ? Number(a.fee_usd) : -Infinity;
+      const bf = b.fee_usd != null ? Number(b.fee_usd) : -Infinity;
+      if (af !== bf) return bf - af;
+      return (a.consultant?.canonical_name ?? "").localeCompare(
+        b.consultant?.canonical_name ?? "",
+      );
+    });
+  }
+  const knownMandates = CONSULTANT_MANDATE_ORDER.filter((m) =>
+    byMandate.has(m),
+  );
+  const unknownMandates = Array.from(byMandate.keys())
+    .filter((m) => !CONSULTANT_MANDATE_ORDER.includes(m as never))
+    .sort();
+  const orderedMandates = [...knownMandates, ...unknownMandates];
+
+  return (
+    <section className="card-surface">
+      <div className="px-4 py-3 border-b border-line">
+        <div className="text-[13px] font-medium text-ink">
+          Investment Consultants
+        </div>
+        <div className="mt-0.5 text-[12px] text-ink-muted">{subtitle}</div>
+      </div>
+      <div className="divide-y divide-line">
+        {orderedMandates.map((mandate) => {
+          const mandateRows = byMandate.get(mandate)!;
+          const label =
+            CONSULTANT_MANDATE_LABEL[mandate] ?? mandate.replace(/_/g, " ");
+          return (
+            <div key={mandate} className="px-4 py-3">
+              <div className="text-[10.5px] text-ink-faint uppercase tracking-wide mb-1.5">
+                {label}
+              </div>
+              <div>
+                {mandateRows.map((row) => (
+                  <ConsultantLineItem key={row.id} row={row} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ConsultantLineItem({ row }: { row: ConsultantRow }) {
+  const linkUrl = row.source_url ?? row.document?.source_url ?? null;
+  const excerpt = row.source_excerpt
+    ? row.source_excerpt.length > 250
+      ? row.source_excerpt.slice(0, 250) + "…"
+      : row.source_excerpt
+    : null;
+  const feeNum = row.fee_usd != null ? Number(row.fee_usd) : null;
+  return (
+    <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 sm:gap-x-4 items-center text-[13px] h-7">
+      <div className="text-ink truncate">
+        {row.consultant?.canonical_name ?? "—"}
+      </div>
+      <div className="num tabular-nums text-ink-muted text-right">
+        {feeNum != null ? (
+          formatUSD(feeNum)
+        ) : (
+          <span className="text-ink-faint">—</span>
+        )}
+      </div>
+      <div className="num tabular-nums text-[11.5px] text-ink-faint text-right">
+        {row.fee_year ? `FY${String(row.fee_year).slice(-2)}` : "—"}
+      </div>
+      <div className="text-right w-4">
+        {linkUrl ? (
+          <a
+            href={linkUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-ink-faint hover:text-accent-hi"
+            title={excerpt ?? "View source document"}
+            aria-label="View source document"
+          >
+            ↗
+          </a>
+        ) : (
+          <span className="text-ink-faint" aria-hidden>
+            ·
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
