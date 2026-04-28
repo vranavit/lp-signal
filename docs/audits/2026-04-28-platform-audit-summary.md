@@ -57,3 +57,14 @@ plan_consultants rows shipped on commit f076118.
 - P2.4: Mobile responsive design effectively absent (1 sm: class in 1,444 lines)
 - P3 cluster: empty-state findings, mandate-order coverage gap, tooltip accessibility, invalid-date edge cases, no not-found.tsx, no i18n
 - Visual rendering not verified - documented as scope gap requiring follow-up audit
+
+### Audit 4 (Schema / DB) — completed 2026-04-29
+
+- 0 P0, 1 P1, 5 P2, 1 P3
+- P4.3 (P1): No Supabase CLI migration tracking — 41 local .sql files, no `supabase_migrations.schema_migrations` table; migrations applied ad-hoc via `scripts/apply-migration.ts`. Blocks parallel dev / branch envs / onboarding.
+- P4.1 + P4.2 (P2): fee_period column missing on plan_consultants + code companion gap (cross-ref Audit 1 P2.7 / Audit 2 P2.3). Migration drafted in Sub-audit 4.5; backfill plan included.
+- P4.4 (P2): 5 FK columns missing indexes (pension_allocations.source_document_id, plan_consultants.source_document_id, rejected_signals.document_id, signals.document_id, user_profiles.firm_id) — performance impact grows with dataset.
+- P4.5 (P2): `gps` table is the only public table with RLS disabled; consistency gap.
+- P4.6 (P2): `asset_class` CHECK enum drifts between pension_allocations (9 values) and signals/rejected_signals (6 values) — duplicate CHECK constraints will drift on each new class addition.
+- P4.7 (P3): 5 tables with RLS=true and zero policies (intentional deny-all for service-role-only) but undocumented; future engineer might "fix" by adding `using (true)`.
+- Schema is structurally sound: 0 orphan rows across 15 FKs, 0 tables without PK, 29 well-designed UNIQUE/CHECK constraints, RLS coverage near-complete.
