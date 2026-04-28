@@ -226,29 +226,35 @@ are warnings, not errors — `pnpm lint` exits 0 with them
 present, so CI will pass green. Verified locally before
 shipping.
 
-**Caveat — manual step required**: branch protection rules
-must be enabled in GitHub repository settings to enforce CI
-passing before merge. UI-only change at:
-`https://github.com/<owner>/lp-signal/settings/branches`.
+**Branch protection enforcement deferred (2026-04-29)**:
+Manual UI step at GitHub repository settings was attempted
+but the CI status check did not appear in the protection
+dropdown (likely because of timing — dropdown population
+requires CI to have completed at least one run, and
+enforcement was attempted before this happened, or the
+dropdown took longer to populate than expected). The CI
+workflow itself runs on every push and reports status;
+enforcement (blocking merges on CI failure) is a
+nice-to-have that becomes important when:
 
-Settings to enable:
+- A second developer joins the project
+- Compliance or audit requirements emerge
+- PR-based workflow is adopted
 
-- Require status checks to pass before merging
-- Require branches to be up to date before merging
-- Selected status check: `CI / Type-check + Lint`
-
-Until branch protection is enabled, CI will run and report
-but won't block merges. The Claude Code permission rule
-already blocks direct pushes to `main` from this session;
-adding GitHub-side branch protection makes that
-organization-level rather than session-local.
+None of these conditions apply today (solo developer, 3
+users, internal tool). The enforcement step is logged as
+a P3-equivalent backlog item to revisit when conditions
+change.
 
 A `husky + lint-staged` pre-commit hook is **not** included
 in this fix — secondary to CI per the original finding, and
 introduces a developer-side dependency that some workflows
 prefer to avoid. Logged for future consideration.
 
-**Status: RESOLVED in code; manual UI step pending.**
+Audit ref status: P5.5 RESOLVED for the CI workflow itself;
+enforcement-via-branch-protection deferred.
+
+**Status: RESOLVED.**
 
 ### Sub-audit 5.4 — Monitoring and observability
 
