@@ -731,7 +731,12 @@ export default async function PensionProfilePage({
 
       {/* Investment consultants engaged by this plan. Always renders --
           empty state asks for tips for the 8 plans we don't yet cover. */}
-      <ConsultantsSection rows={consultantRows} />
+      <ConsultantsSection
+        rows={consultantRows}
+        incompleteCoverageNote={
+          INCOMPLETE_CONSULTANT_COVERAGE_NOTES[params.slug] ?? null
+        }
+      />
     </div>
   );
 }
@@ -1206,6 +1211,18 @@ function Th({
   );
 }
 
+// Per-plan disclosure notes for plans whose ACFR is known to under-disclose
+// firm-level consultant data. Keyed by scrape_config.key (the URL slug). The
+// note renders under the section subtitle when the section has at least one
+// row. Audit 1 P2.6 surfaced LACERA: page 15 of the ACFR lists 8 Investment
+// Consultants but the Schedule of Investment Expenses only discloses the
+// aggregate "Consultants" line, so 7 firms are intentionally absent from
+// plan_consultants pending the P2.6 re-extraction iteration.
+const INCOMPLETE_CONSULTANT_COVERAGE_NOTES: Record<string, string> = {
+  lacera:
+    "Coverage may be incomplete. The source ACFR's aggregate \"Consultants\" line implies additional firms beyond those shown.",
+};
+
 // Display order for mandate groups. Anything not in this list falls to the
 // bottom in alphabetical order (e.g. future "infrastructure" / "credit").
 const CONSULTANT_MANDATE_ORDER = [
@@ -1221,7 +1238,13 @@ const CONSULTANT_MANDATE_LABEL: Record<string, string> = {
   hedge_funds: "Hedge Funds",
 };
 
-function ConsultantsSection({ rows }: { rows: ConsultantRow[] }) {
+function ConsultantsSection({
+  rows,
+  incompleteCoverageNote,
+}: {
+  rows: ConsultantRow[];
+  incompleteCoverageNote?: string | null;
+}) {
   if (rows.length === 0) {
     return (
       <section className="card-surface">
@@ -1331,6 +1354,11 @@ function ConsultantsSection({ rows }: { rows: ConsultantRow[] }) {
           Investment Consultants
         </div>
         <div className="mt-0.5 text-[12px] text-ink-muted">{subtitle}</div>
+        {incompleteCoverageNote ? (
+          <div className="mt-1.5 text-[11.5px] text-ink-faint italic">
+            {incompleteCoverageNote}
+          </div>
+        ) : null}
       </div>
       <div className="divide-y divide-line">
         {orderedMandates.map((mandate) => {
