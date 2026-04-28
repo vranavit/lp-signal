@@ -39,7 +39,7 @@ This audit does **not** examine:
 | Severity | Count | Open |
 |---|---|---|
 | P0 | 0 | 0 |
-| P1 | 3 | 3 |
+| P1 | 3 | **2** (P5.1 RESOLVED 2026-04-29) |
 | P2 | 6 | 6 |
 | P3 | 3 | 3 |
 
@@ -91,7 +91,31 @@ implications. Resolution: schema migration to flip
 the role assignment entirely and let the column default fire).
 Existing admin rows for owners explicitly preserved.
 
-**Status: OPEN.** To be resolved in Audit 5 or as a separate fix.
+**Resolution (2026-04-29)**: applied migration
+`20260429000001_fix_handle_new_user_default_role.sql` which
+rewrites `public.handle_new_user()` to insert with
+`role = 'user'` (matching the column default) instead of the
+hardcoded `'admin'`. New signups will now receive least-
+privilege access by default. Existing admin assignments for
+owner accounts (`vitek.vrana@bloorcapital.com` and
+`vitek.vrana@mail.utoronto.ca`) preserved unchanged. Verified
+by post-migration query: function body no longer contains the
+`'admin'` literal, and all 3 existing `user_profiles` rows
+(Vitek primary, Vitek secondary, Nicholas) are unchanged from
+their pre-migration state.
+
+Pattern check confirmed the bug source was isolated to
+`handle_new_user`: only 1 PG function across `public` and
+`auth` schemas referenced `'admin'`; only 1 SQL migration line
+hardcoded the role assignment (the predecessor migration
+`20260421000003_auth_triggers.sql:49` that this migration
+supersedes); zero TS/TSX files set `role='admin'` (the 3 hits
+in `app/(dashboard)/layout.tsx`,
+`app/(dashboard)/admin/ingestion/page.tsx`, and
+`app/(dashboard)/outreach/page.tsx` only READ the role for
+gating, tracked separately as P5.8).
+
+**Status: RESOLVED.**
 
 ## Findings (Audit 5 direct)
 
