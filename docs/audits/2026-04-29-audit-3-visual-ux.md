@@ -103,8 +103,8 @@ the rendered output against the Tailwind classes used.
 |---|---|---|
 | P0 | 0 | 0 |
 | P1 | 0 | 0 |
-| P2 | 4 | 4 |
-| P3 | 8 | 8 |
+| P2 | 5 | **3** (P2.1, P2.2 RESOLVED 2026-04-29; P2.5 added by Fix-3 pattern check) |
+| P3 | 8 | **7** (P3.H RESOLVED 2026-04-29) |
 
 No P0 or P1 visual/UX defects from the code-side review. Four
 P2 findings cluster around missing Next.js boundary files
@@ -114,6 +114,12 @@ unvalidated `source_url` protocol path that would render
 of responsive Tailwind classes (1 `sm:` class across 1,444
 lines). Eight P3 findings include the three pre-audit
 empty-state findings + smaller correctness/i18n/a11y nits.
+
+**2026-04-29 update**: Fix 3 closed P2.1, P2.2, P3.H by
+creating `error.tsx`, `loading.tsx`, `not-found.tsx` for the
+`pensions/[slug]` route. Pattern check during Fix 3 surfaced
+**P2.5** (new): 9 of 13 dashboard route segments still lack
+the boundary file trio; the gap is dashboard-wide.
 
 The audit does not verify any actual visual rendering — the
 interactive walk-through was skipped in-session. Real visual
@@ -418,7 +424,23 @@ beyond those.
 
 ## Sub-audit 3.4 — Error states (cross-ref Audit 2 P3.4)
 
-### P2.1 — No `error.tsx` for the pensions route segment
+### P2.1 — No `error.tsx` for the pensions route segment ✓ RESOLVED 2026-04-29
+
+**Resolution**: created `app/(dashboard)/pensions/[slug]/error.tsx`
+matching the canonical pattern used by `signals/error.tsx` and
+`outreach/error.tsx`: `"use client"` directive, `useEffect`
+hook calling `console.error("[/pensions/[slug]] route error:", error)`
+so errors land in Vercel function logs in production, AlertTriangle
+icon in a red pill, descriptive heading, error message + digest
+display when present, RotateCw retry button via `Button`
+component, and a "Back to all plans" link as a secondary recovery
+path. Type-check exit 0; route compiles cleanly. Errors that
+previously bubbled to the default Next.js error wall now render
+in a consistent in-app card.
+
+**Original finding below.**
+
+
 
 `app/(dashboard)/pensions/[slug]/error.tsx` does not exist.
 Other dashboard routes have one:
@@ -440,7 +462,19 @@ the user gets the default Next.js error wall.
 a top-level `app/error.tsx` for catastrophic failures).
 **Cross-reference: Audit 2 P3.4.**
 
-### P2.2 — No `loading.tsx` for the pensions route segment
+### P2.2 — No `loading.tsx` for the pensions route segment ✓ RESOLVED 2026-04-29
+
+**Resolution**: created `app/(dashboard)/pensions/[slug]/loading.tsx`
+using the codebase's existing `Skeleton` and `TableSkeleton`
+primitives from `@/components/ui/skeleton`. Skeleton matches
+the page structure: back link, hero card (plan name on left
++ unfunded widget on right), 3-card stat strip, allocation
+table (TableSkeleton 6 rows × 8 columns), and a consultants
+section header. Cold-cache loads now show a structured
+skeleton matching the final page geometry rather than a blank
+screen.
+
+**Original finding below.**
 
 `app/(dashboard)/pensions/[slug]/loading.tsx` does not exist.
 Other dashboard routes have one. Without a loading boundary,
@@ -451,16 +485,70 @@ signals, signalsCount, docsCount, policyChanges,
 consultantData) can take a noticeable second or two on cold
 cache.
 
-**Severity: P2.** **Status: OPEN.** A skeleton matching the
-hero + table layout would significantly improve perceived
-performance.
+**Severity: P2.** **Status: ~~OPEN~~ → RESOLVED 2026-04-29.**
 
-### P3.H — No `not-found.tsx` for the pensions route segment
+### P3.H — No `not-found.tsx` for the pensions route segment ✓ RESOLVED 2026-04-29
+
+**Resolution**: created `app/(dashboard)/pensions/[slug]/not-found.tsx`
+mirroring the "data ingestion in progress" empty-state aesthetic
+already in `page.tsx` (calm grey dot, ink-muted heading, ink-faint
+explanation, "Browse all plans" recovery link) so the experience
+reads as part of the app rather than a generic 404. Triggered by
+the existing `notFound()` call at `page.tsx:107` when a slug
+doesn't resolve to a plan.
+
+**Original finding below.**
 
 `notFound()` is called when the slug doesn't match any plan.
 Without a `not-found.tsx` in the route segment, Next.js shows
 its default minimalist 404 page. **Severity: P3.** Status:
-OPEN.
+~~OPEN~~ → RESOLVED 2026-04-29.
+
+### P2.5 (new, surfaced by Fix 3 pattern check) — Dashboard-wide boundary file gap
+
+The Fix-3 pattern check (executed 2026-04-29 after closing
+P2.1, P2.2, P3.H for `pensions/[slug]`) inventoried boundary
+files across all 13 `app/(dashboard)/` route segments:
+
+| Route segment | error.tsx | loading.tsx | not-found.tsx |
+|---|---|---|---|
+| (dashboard root) | — | — | — |
+| admin | — | — | — |
+| admin/ingestion | — | — | — |
+| explore | yes | yes | — |
+| outreach | yes | yes | — |
+| pensions | — | — | — |
+| **pensions/[slug]** | **yes** | **yes** | **yes** |
+| plans | — | — | — |
+| settings | — | — | — |
+| settings/firm-profile | — | — | — |
+| signals | yes | yes | — |
+| signals/[id] | — | — | — |
+| signals/review | — | — | — |
+
+Findings:
+
+- **9 of 13 route segments still lack `error.tsx` and
+  `loading.tsx`** — only `explore`, `outreach`, `signals`, and
+  the just-fixed `pensions/[slug]` have them.
+- **12 of 13 route segments still lack `not-found.tsx`** —
+  `pensions/[slug]` is the only one. Even routes with `error`
+  + `loading` boundaries skip the 404 case.
+- The `(dashboard)` root layout has no boundary either, so
+  any uncaught error in the parent layout falls through to
+  Next's default error wall.
+
+**Severity: P2.** **Status: OPEN.**
+Recommended: a follow-up sweep that ports the
+signals/outreach/pensions patterns to the remaining route
+segments. Lowest-cost approach is a single fix session adding
+~10 small files (3 boundary types × the 9 routes that need
+them, modulo whether 404s make sense for non-dynamic routes
+like `settings/`). Cross-reference: this finding is the
+generalization of P2.1 and P2.2 — closing it eliminates the
+"signals/explore/outreach/pensions has them but admin/plans
+doesn't" inconsistency that an institutional review would
+flag.
 
 ---
 

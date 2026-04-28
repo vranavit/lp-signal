@@ -52,7 +52,7 @@ plan_consultants rows shipped on commit f076118.
 
 - 0 P0, 0 P1, 4 P2, 8 P3
 - SCOPE NOTE: Interactive visual walk-through deferred to a separate session before external demo. Code-side review only.
-- P2.1, P2.2: Missing error.tsx and loading.tsx for pensions/[slug] route (other dashboard routes have these; pensions is the outlier)
+- ~~P2.1, P2.2~~: ~~Missing error.tsx and loading.tsx for pensions/[slug] route (other dashboard routes have these; pensions is the outlier)~~ **RESOLVED 2026-04-29** by Fix 3: error.tsx, loading.tsx, and not-found.tsx all created for pensions/[slug] matching the canonical signals/outreach pattern. Pattern check surfaced new **P2.5**: 9 of 13 dashboard segments still lack the trio (P2 OPEN, follow-up sweep).
 - P2.3: source_url not protocol-validated; javascript: scheme would render as clickable
 - P2.4: Mobile responsive design effectively absent (1 sm: class in 1,444 lines)
 - P3 cluster: empty-state findings, mandate-order coverage gap, tooltip accessibility, invalid-date edge cases, no not-found.tsx, no i18n
