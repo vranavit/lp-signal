@@ -77,7 +77,7 @@ plan_consultants rows shipped on commit f076118.
 - P5.6 (P1): No test suite — zero `*.test.ts`, no test directories, no test framework deps in `package.json`. Every audit's findings validated by hand; future regressions undetected.
 - P5.2 (P2): `SUPABASE_SERVICE_ROLE_KEY` referenced in code but missing from `.env.local.example` (only `SUPABASE_SECRET_KEY` is documented).
 - P5.3 (P2): No documented secret rotation procedure.
-- P5.5 (P2): No CI / GitHub Actions / pre-commit hooks. `pnpm tsc` and `pnpm lint` not gated on push.
+- ~~P5.5 (P2)~~: ~~No CI / GitHub Actions / pre-commit hooks. `pnpm tsc` and `pnpm lint` not gated on push.~~ **RESOLVED 2026-04-29** by Fix 4: `.github/workflows/ci.yml` runs `pnpm tsc --noEmit` + `pnpm lint` on every push to main and PR. Manual UI step pending (branch protection enable).
 - P5.7 (P2): Zero rate limiting anywhere. Cron routes are `CRON_SECRET`-gated; user-facing dashboard routes are not.
 - P5.8 (P2): Hardcoded admin email duplicated in 3 files (DRY violation: `(dashboard)/layout.tsx`, `admin/ingestion/page.tsx`, `outreach/page.tsx`).
 - P5.10 (P2): No documented backup/restore procedure.

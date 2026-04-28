@@ -40,7 +40,7 @@ This audit does **not** examine:
 |---|---|---|
 | P0 | 0 | 0 |
 | P1 | 3 | **2** (P5.1 RESOLVED 2026-04-29) |
-| P2 | 6 | 6 |
+| P2 | 6 | **5** (P5.5 RESOLVED 2026-04-29) |
 | P3 | 3 | 3 |
 
 P0: none. **P1: three** — P5.1 (pre-loaded handle_new_user
@@ -211,6 +211,44 @@ checks. **Severity: P2.** **Status: OPEN.** Cheapest fix: a
 
 A `husky + lint-staged` pre-commit hook would also help but
 is secondary to CI.
+
+**Resolution (2026-04-29)**: GitHub Actions CI workflow added
+at `.github/workflows/ci.yml`. Runs on every push to `main`
+and on every PR targeting `main`. Steps: checkout → setup
+pnpm 10.33.0 (matches `packageManager` field in
+`package.json`) → setup Node 20 LTS (matches Vercel's deploy
+runtime) with pnpm cache → `pnpm install --frozen-lockfile`
+(prevents version drift between local and CI) → `pnpm tsc
+--noEmit` → `pnpm lint`.
+
+The 3 pre-existing lint warnings in `explore/` (Audit 2 P3.1)
+are warnings, not errors — `pnpm lint` exits 0 with them
+present, so CI will pass green. Verified locally before
+shipping.
+
+**Caveat — manual step required**: branch protection rules
+must be enabled in GitHub repository settings to enforce CI
+passing before merge. UI-only change at:
+`https://github.com/<owner>/lp-signal/settings/branches`.
+
+Settings to enable:
+
+- Require status checks to pass before merging
+- Require branches to be up to date before merging
+- Selected status check: `CI / Type-check + Lint`
+
+Until branch protection is enabled, CI will run and report
+but won't block merges. The Claude Code permission rule
+already blocks direct pushes to `main` from this session;
+adding GitHub-side branch protection makes that
+organization-level rather than session-local.
+
+A `husky + lint-staged` pre-commit hook is **not** included
+in this fix — secondary to CI per the original finding, and
+introduces a developer-side dependency that some workflows
+prefer to avoid. Logged for future consideration.
+
+**Status: RESOLVED in code; manual UI step pending.**
 
 ### Sub-audit 5.4 — Monitoring and observability
 
