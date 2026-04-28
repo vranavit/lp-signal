@@ -47,3 +47,13 @@ plan_consultants rows shipped on commit f076118.
 - Codebase fundamentally clean: no TODO/FIXME, no SQL injection patterns, no insecure env fallbacks
 - All P2s are classifier-prompt or schema-companion findings cross-referenced to Audit 1
 - Test suite absence flagged for Audit 5
+
+### Audit 3 (Visual / UX) — completed 2026-04-29 (CODE-SIDE ONLY)
+
+- 0 P0, 0 P1, 4 P2, 8 P3
+- SCOPE NOTE: Interactive visual walk-through deferred to a separate session before external demo. Code-side review only.
+- P2.1, P2.2: Missing error.tsx and loading.tsx for pensions/[slug] route (other dashboard routes have these; pensions is the outlier)
+- P2.3: source_url not protocol-validated; javascript: scheme would render as clickable
+- P2.4: Mobile responsive design effectively absent (1 sm: class in 1,444 lines)
+- P3 cluster: empty-state findings, mandate-order coverage gap, tooltip accessibility, invalid-date edge cases, no not-found.tsx, no i18n
+- Visual rendering not verified - documented as scope gap requiring follow-up audit
