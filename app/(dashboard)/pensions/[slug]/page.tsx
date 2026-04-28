@@ -79,6 +79,7 @@ type ConsultantRow = {
   source_url: string | null;
   source_excerpt: string | null;
   source_document_id: string | null;
+  last_verified_at: string | null;
   consultant: { canonical_name: string; website: string | null } | null;
   document: { source_url: string | null; meeting_date: string | null } | null;
 };
@@ -193,7 +194,7 @@ export default async function PensionProfilePage({
   const { data: consultantData } = await supabase
     .from("plan_consultants")
     .select(
-      "id, mandate_type, fee_usd, fee_year, source_type, source_url, source_excerpt, source_document_id, consultant:consultants(canonical_name, website), document:documents(source_url, meeting_date)",
+      "id, mandate_type, fee_usd, fee_year, source_type, source_url, source_excerpt, source_document_id, last_verified_at, consultant:consultants(canonical_name, website), document:documents(source_url, meeting_date)",
     )
     .eq("plan_id", plan.id);
   const consultantRows = (consultantData ?? []) as unknown as ConsultantRow[];
@@ -1253,13 +1254,18 @@ function ConsultantsSection({ rows }: { rows: ConsultantRow[] }) {
     );
   }
 
-  // Subtitle: when every row carries the same source_type, surface that fact
-  // once at the section level rather than as redundant per-row badges. When
-  // mixed, fall back to a count and let per-row badges (added in a future
-  // phase) carry the source signal.
-  const sourceTypes = new Set(rows.map((r) => r.source_type));
-  const allCafr =
-    sourceTypes.size === 1 && sourceTypes.has("cafr_extraction");
+  // Subtitle: cover the three combinations of source_type that can appear in
+  // a section. All-ACFR collapses the source label into a single line with
+  // the mode fee_year. All-manual surfaces "Manually verified". Mixed splits
+  // the count -- per-row "Verified {Mon YYYY}" captions carry the recency
+  // for the manual subset.
+  const cafrCount = rows.filter((r) => r.source_type === "cafr_extraction")
+    .length;
+  const manualCount = rows.filter(
+    (r) => r.source_type === "manual_research",
+  ).length;
+  const allCafr = cafrCount === rows.length;
+  const allManual = manualCount === rows.length;
   const yearCounts = new Map<number, number>();
   for (const r of rows) {
     if (r.fee_year != null) {
@@ -1277,11 +1283,17 @@ function ConsultantsSection({ rows }: { rows: ConsultantRow[] }) {
   const advisorCount = new Set(
     rows.map((r) => r.consultant?.canonical_name ?? r.id),
   ).size;
-  const subtitle = allCafr
-    ? `${advisorCount} advisor${advisorCount === 1 ? "" : "s"}${
-        modeYear ? ` · Sourced from FY${String(modeYear).slice(-2)} CAFR` : ""
-      }`
-    : `${advisorCount} advisor${advisorCount === 1 ? "" : "s"}`;
+  const advisorWord = `advisor${advisorCount === 1 ? "" : "s"}`;
+  let subtitle: string;
+  if (allCafr) {
+    subtitle = `${advisorCount} ${advisorWord}${
+      modeYear ? ` · Sourced from FY${String(modeYear).slice(-2)} ACFR` : ""
+    }`;
+  } else if (allManual) {
+    subtitle = `${advisorCount} ${advisorWord} · Manually verified`;
+  } else {
+    subtitle = `${advisorCount} ${advisorWord} · ${cafrCount} from ACFR · ${manualCount} manually verified`;
+  }
 
   // Group by mandate, then sort within each group: fee_year DESC primary,
   // fee_usd DESC NULLS LAST secondary, name tiebreak. Multi-year duplicates
@@ -1351,10 +1363,25 @@ function ConsultantLineItem({ row }: { row: ConsultantRow }) {
       : row.source_excerpt
     : null;
   const feeNum = row.fee_usd != null ? Number(row.fee_usd) : null;
+  const verifiedLabel =
+    row.source_type === "manual_research" && row.last_verified_at
+      ? new Date(row.last_verified_at).toLocaleDateString("en-US", {
+          month: "short",
+          year: "numeric",
+          timeZone: "UTC",
+        })
+      : null;
   return (
-    <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 sm:gap-x-4 items-center text-[13px] h-7">
-      <div className="text-ink truncate">
-        {row.consultant?.canonical_name ?? "—"}
+    <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 sm:gap-x-4 items-center text-[13px] min-h-7 py-0.5">
+      <div className="min-w-0">
+        <div className="text-ink truncate">
+          {row.consultant?.canonical_name ?? "—"}
+        </div>
+        {verifiedLabel ? (
+          <div className="text-[10.5px] text-ink-faint leading-tight">
+            Verified {verifiedLabel}
+          </div>
+        ) : null}
       </div>
       <div className="num tabular-nums text-ink-muted text-right">
         {feeNum != null ? (
