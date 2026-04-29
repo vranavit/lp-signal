@@ -23,7 +23,7 @@ Status: Day 1 verification
 **IPS URL:** https://www.calstrs.com/files/a6cd5ce3c/InvestmentPolicyStatement05-2025.pdf
 **IPS document name:** Investment Policy Statement (current version: 05-2025)
 **IPS last published:** May 2025 (per filename)
-**Notes:** **BLOCKED — 403 anti-bot.** Both `/news-releases` and `/investment-policies` index returned 403 to WebFetch (no Chrome UA). Matches the existing spec Risk 1 flag. Scraper must spoof `User-Agent: Mozilla/5.0 ...`. **IPS URL is unstable** — path includes a hashed segment (`a6cd5ce3c`) AND a version-dated filename (`05-2025`), so the URL changes on every update. Scraper must crawl `/investment-policies` index for the current "Investment Policy Statement" link rather than hard-coding the PDF URL. Strategy: 1 (URL inventory) + manual verification needed in browser to confirm patterns.
+**Notes:** Verified 2026-04-30: `fetchWithDefaults` handles CalSTRS WAF cleanly via existing Chrome 132 UA + sec-fetch-* headers shipped in `lib/scrapers/http.ts`. Live fetch returned 200 with 116,788 chars of server-rendered HTML. The original 403 was a WebFetch (Anthropic tool) limitation, not our scraping infrastructure. **IPS URL is unstable** — path includes a hashed segment (`a6cd5ce3c`) AND a version-dated filename (`05-2025`), so the URL changes on every update. Scraper must crawl `/investment-policies` index for the current "Investment Policy Statement" link rather than hard-coding the PDF URL. Strategy: 1.
 
 ---
 
@@ -65,7 +65,7 @@ Status: Day 1 verification
 | Plan | Press URL | IPS URL | Notes |
 |---|---|---|---|
 | CalPERS | OK | OK | Stable URLs both, year-grouped press index |
-| CalSTRS | **blocked (403)** | **unstable URL** | Anti-bot wall; IPS PDF path includes hash + version date — scraper must crawl `/investment-policies` |
+| CalSTRS | OK | **unstable URL** | `fetchWithDefaults` clears the WAF (verified 2026-04-30); IPS PDF path includes hash + version date — scraper must crawl `/investment-policies` |
 | NYSCRF | OK (filter required) | OK | Press is OSC-wide; filter on topic="Pension & Retirement" or slug pattern |
 | Mass PRIM | OK | **unstable URL** | IPS path embeds approval date; scraper must crawl for latest `PRIM-IPS-*.pdf` |
 | Oregon | OK | OK | Press feed at `apps.oregon.gov` subdomain; both URLs stable |
@@ -74,10 +74,7 @@ Status: Day 1 verification
 
 ## Plans flagged "blocked - manual verification needed"
 
-- **CalSTRS press release page** (`/news-releases`) — 403 to WebFetch with no UA. Needs browser verification of pagination (load-more vs paged) and individual release URL pattern. **Workaround for scraper: Chrome UA spoof** (already noted in spec Risk 1).
-- **CalSTRS IPS index** (`/investment-policies`) — same 403. Needs browser verification to confirm the link text and PDF anchor pattern.
-
-No other plans hit hard blockers.
+None as of 2026-04-30. The original CalSTRS flag (`/news-releases` and `/investment-policies` returning 403 to WebFetch) was a tool-specific issue — `fetchWithDefaults` in `lib/scrapers/http.ts` handles CalSTRS's WAF via the Chrome 132 UA + sec-fetch-* header set. Live verified Day 3 pre-flight.
 
 ---
 
@@ -100,8 +97,8 @@ No other plans hit hard blockers.
    - Mass PRIM: `/newsroom/` (singular) with PDFs under `/wp-content/uploads/{year}/{month}/`
    - Oregon: `/oregon-newsroom/OR/OST/Posts/Post/{slug}` on a subdomain
 5. **2/5 press feeds are mixed** with non-pension content (NYSCRF mixed with all OSC press, Oregon mixed with all Treasury press). Both have topic/category filters available, so per-plan filter rules are needed.
-6. **1/5 plans (CalSTRS) requires UA spoofing** to fetch — matches existing spec Risk 1.
-7. **0/5 plans had a JavaScript-only feed** (no client-side rendering blockers visible). All can be scraped with HTTP fetch + Cheerio, except CalSTRS where the body fetches require Chrome UA but the markup is still server-rendered.
+6. **0/5 plans require special handling beyond the existing `fetchWithDefaults` helper.** CalSTRS was initially flagged as needing UA spoofing, but verification on 2026-04-30 confirmed the existing Chrome 132 UA + sec-fetch-* headers in `lib/scrapers/http.ts` clear its WAF. The earlier 403 was a WebFetch (Anthropic tool) issue, not a scraping infrastructure issue.
+7. **0/5 plans had a JavaScript-only feed** (no client-side rendering blockers visible). All 5 can be scraped with HTTP fetch + Cheerio.
 
 ---
 
@@ -110,7 +107,7 @@ No other plans hit hard blockers.
 | Plan | Strategy used |
 |---|---|
 | CalPERS | 1 (direct fetch of likely URL — verified) |
-| CalSTRS | 1 + manual flag (URL identified, fetch blocked) |
+| CalSTRS | 1 (URL identified; fetch verified clean via `fetchWithDefaults` on 2026-04-30) |
 | NYSCRF | 2 (followed nav from `/common-retirement-fund` to `/press`) |
 | Mass PRIM | 1 (direct fetch verified `/newsroom/` is canonical) |
 | Oregon | 2 (search surfaced both candidates; verified `apps.oregon.gov` is the live feed, `oregon.gov/treasury/news-data` is a nav page) |
