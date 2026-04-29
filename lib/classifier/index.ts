@@ -31,6 +31,7 @@ import type { IpsAllocation } from "./schemas/ips";
 import { computePriorityScore } from "./score";
 import type { ClassifiedSignal } from "./schema";
 import type { CafrAllocation } from "./schemas/cafr-allocation";
+import { verifyAllocationsForPlan } from "../predictive/verify-cross-source";
 
 const STORAGE_BUCKET = "documents";
 // Board-packet PDFs (Oregon "Public Book", MA PRIM full minutes) routinely
@@ -911,6 +912,28 @@ export async function classifyCafrFromBytes(
     );
   }
 
+  // Cross-source verification post-insert hook. Idempotent: skips pairs
+  // already verified at v1.1-allocation. Wrapped in try/catch so a
+  // verifier failure (model timeout, transient DB error) cannot abort
+  // the classifier run; the allocations are already persisted at this
+  // point and the verifier can be re-run later.
+  if (insertedCount > 0) {
+    try {
+      const v = await verifyAllocationsForPlan(supabase, { planId: plan.id });
+      if (v.pairsVerified > 0 || v.errors.length > 0) {
+        console.log(
+          `[classifier/cafr] cross-source verification (doc=${doc.id}): ` +
+            `considered=${v.pairsConsidered} new=${v.pairsVerified} ` +
+            `already=${v.pairsAlreadyVerified} errors=${v.errors.length}`,
+        );
+      }
+    } catch (e) {
+      console.warn(
+        `[classifier/cafr] cross-source verification threw (doc=${doc.id}): ${e instanceof Error ? e.message : e}`,
+      );
+    }
+  }
+
   await supabase
     .from("documents")
     .update({
@@ -1046,6 +1069,25 @@ async function classifyIps(
       `[classifier/ips] dropped ${dropped.length} allocations below confidence threshold ` +
         `(doc=${doc.id}): ${dropped.map((d) => `${d.asset_class}@${d.confidence.toFixed(2)}`).join(", ")}`,
     );
+  }
+
+  // Cross-source verification post-insert hook. See classifyCafr above
+  // for the rationale. Same pattern: idempotent, fault-tolerant, non-blocking.
+  if (insertedCount > 0) {
+    try {
+      const v = await verifyAllocationsForPlan(supabase, { planId: plan.id });
+      if (v.pairsVerified > 0 || v.errors.length > 0) {
+        console.log(
+          `[classifier/ips] cross-source verification (doc=${doc.id}): ` +
+            `considered=${v.pairsConsidered} new=${v.pairsVerified} ` +
+            `already=${v.pairsAlreadyVerified} errors=${v.errors.length}`,
+        );
+      }
+    } catch (e) {
+      console.warn(
+        `[classifier/ips] cross-source verification threw (doc=${doc.id}): ${e instanceof Error ? e.message : e}`,
+      );
+    }
   }
 
   await supabase

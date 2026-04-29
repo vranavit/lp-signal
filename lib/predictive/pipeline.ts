@@ -30,18 +30,13 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { CONFIRMING_VERDICTS } from "./verify-cross-source";
 
 export type MultiplierUpdate = {
   updated: number;
   multiplier: number;
   confirmingVerificationCount: number;
 };
-
-const CONFIRMING_VERDICTS = [
-  "confirms",
-  "partially_confirms",
-  "policy_changed",
-] as const;
 
 const TYPE_2_SIGNAL_TYPE = 2;
 

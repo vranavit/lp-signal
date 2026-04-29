@@ -63,6 +63,25 @@ import {
 
 export const VERIFIER_VERSION = "v1.1-allocation";
 
+/**
+ * Verdicts that count as "this verification confirms the underlying
+ * pension policy fact." Used by the pipeline to decide whether a
+ * source_verifications row should bump the related signals'
+ * `confidence_multiplier` and by the orchestrator to decide whether to
+ * invoke `applyVerificationToRelatedSignals` after persistence.
+ *
+ * `conflicts` and `unrelated` are deliberately excluded - a conflict
+ * flags a data quality issue (do not strengthen confidence), and an
+ * unrelated verdict means the records do not describe the same
+ * underlying fact.
+ */
+export const CONFIRMING_VERDICTS = [
+  "confirms",
+  "partially_confirms",
+  "policy_changed",
+] as const;
+export type ConfirmingVerdict = (typeof CONFIRMING_VERDICTS)[number];
+
 export type AllocationRecord = {
   id: string;
   plan_id: string;
@@ -372,10 +391,9 @@ export async function verifyPersistAndApply(
     result: verification,
   });
 
-  const isConfirming =
-    verification.verification_type === "confirms" ||
-    verification.verification_type === "partially_confirms" ||
-    verification.verification_type === "policy_changed";
+  const isConfirming = (CONFIRMING_VERDICTS as readonly string[]).includes(
+    verification.verification_type,
+  );
 
   // recordA and recordB share plan_id + asset_class by construction
   // (buildVerifiablePairs filters on these). Use recordA as the source
@@ -388,6 +406,125 @@ export async function verifyPersistAndApply(
     : null;
 
   return { verification, verificationId, multiplierUpdate };
+}
+
+export type PlanVerificationOutcome = {
+  pairsConsidered: number;
+  pairsAlreadyVerified: number;
+  pairsVerified: number;
+  errors: { pair: string; message: string }[];
+};
+
+/**
+ * Run cross-source verification on every eligible allocation pair for
+ * a plan, skipping any pair that already has a v1.1-allocation
+ * verification on file. Idempotent: re-running with no new allocations
+ * does no model calls and writes nothing.
+ *
+ * Used by the IPS and CAFR classifier paths after a successful
+ * `pension_allocations` insert. The classifier passes only `planId` -
+ * this function refetches the plan's full allocation set, runs
+ * `buildVerifiablePairs`, filters out already-verified pairs, and
+ * calls `verifyPersistAndApply` for the rest.
+ *
+ * Errors on individual pairs are caught and accumulated; the function
+ * never throws so a verifier failure cannot abort the classifier path.
+ */
+export async function verifyAllocationsForPlan(
+  supabase: SupabaseClient,
+  args: { planId: string },
+): Promise<PlanVerificationOutcome> {
+  const outcome: PlanVerificationOutcome = {
+    pairsConsidered: 0,
+    pairsAlreadyVerified: 0,
+    pairsVerified: 0,
+    errors: [],
+  };
+
+  const { data: rows, error } = await supabase
+    .from("pension_allocations")
+    .select(
+      "id, plan_id, asset_class, sub_class, target_pct, target_min_pct, target_max_pct, as_of_date, prompt_version, source_quote, plans!inner(name)",
+    )
+    .eq("plan_id", args.planId)
+    .or("prompt_version.eq.v1.0-ips,prompt_version.like.%cafr%");
+  if (error) {
+    outcome.errors.push({ pair: "_fetch", message: error.message });
+    return outcome;
+  }
+
+  const records: AllocationRecord[] = (rows ?? []).map((r: any) => ({
+    id: r.id,
+    plan_id: r.plan_id,
+    plan_name: r.plans?.name ?? "",
+    asset_class: r.asset_class,
+    sub_class: r.sub_class,
+    target_pct: r.target_pct === null ? null : Number(r.target_pct),
+    target_min_pct:
+      r.target_min_pct === null ? null : Number(r.target_min_pct),
+    target_max_pct:
+      r.target_max_pct === null ? null : Number(r.target_max_pct),
+    as_of_date:
+      typeof r.as_of_date === "string"
+        ? r.as_of_date
+        : new Date(r.as_of_date).toISOString().slice(0, 10),
+    prompt_version: r.prompt_version,
+    source_excerpt: r.source_quote ?? null,
+  }));
+
+  const pairs = buildVerifiablePairs(records);
+  outcome.pairsConsidered = pairs.length;
+  if (pairs.length === 0) return outcome;
+
+  // Look up which of these pairs already have a v1.1-allocation row.
+  // persistVerification stores pairs canonically (smaller UUID first),
+  // so every existing row has record_a_id = min(pair.cafr.id, pair.ips.id).
+  // We query record_a_id IN (... all alloc ids touching pairs ...) which
+  // covers the canonical-side check. The unique pair index uses
+  // least()/greatest() so order-flipping is also detected at write time.
+  const idsTouchingPairs = new Set<string>();
+  for (const p of pairs) {
+    idsTouchingPairs.add(p.cafr.id);
+    idsTouchingPairs.add(p.ips.id);
+  }
+
+  const { data: existing, error: existingErr } = await supabase
+    .from("source_verifications")
+    .select("record_a_id, record_b_id")
+    .eq("verifier_version", VERIFIER_VERSION)
+    .in("record_a_id", [...idsTouchingPairs]);
+  if (existingErr) {
+    outcome.errors.push({ pair: "_existing_lookup", message: existingErr.message });
+    return outcome;
+  }
+
+  const verifiedKeys = new Set<string>();
+  for (const v of existing ?? []) {
+    verifiedKeys.add(canonicalPairKey(v.record_a_id as string, v.record_b_id as string));
+  }
+
+  for (const pair of pairs) {
+    const key = canonicalPairKey(pair.cafr.id, pair.ips.id);
+    if (verifiedKeys.has(key)) {
+      outcome.pairsAlreadyVerified++;
+      continue;
+    }
+    try {
+      await verifyPersistAndApply(supabase, pair.cafr, pair.ips);
+      outcome.pairsVerified++;
+    } catch (e) {
+      outcome.errors.push({
+        pair: `${pair.cafr.id}+${pair.ips.id}`,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  return outcome;
+}
+
+function canonicalPairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
 /**
