@@ -197,6 +197,49 @@ Examples:
 
 These are valid data points - emit them with appropriate confidence based on the section heading and firm match. The downstream UI handles negative fees.
 
+**fee_period semantic.**
+
+For each fee_usd you extract, also identify the period basis the disclosure represents. Set fee_period to one of: \`annual\` / \`quarterly\` / \`ytd\` / \`monthly\` / null.
+
+\`annual\` indicators (default for ACFR/CAFR Schedule of Investment Expenses):
+- "Schedule of Investment Expenses for the fiscal year ended..."
+- "Year ended June 30, 2025" / "Year ended December 31, 2024" / similar fiscal-year context
+- "(in thousands)" header without a quarterly qualifier in the surrounding text
+- Annual report context, single fiscal-year column
+
+\`quarterly\` indicators (typical of board-meeting packet fee schedules):
+- Schedule footer: "Total Quarterly Charges to Funds" / "Total Quarterly Expenses"
+- "Q1/Q2/Q3/Q4 [year]" or "First/Second/Third/Fourth Quarter"
+- "Three months ended [date]" / "For the quarter ended..."
+- "Single-quarter spend" / "during the [quarter] of [year]"
+- Source URL or document title references "Board Meeting" + a quarterly cadence
+
+\`ytd\` indicators:
+- "Year-to-date" / "YTD"
+- "Cumulative through [month] [year]"
+- Schedule that progressively updates each quarter (Q3 figure = sum of Q1+Q2+Q3 single-quarter values)
+
+\`monthly\` indicators (rare):
+- "For the month of [month] [year]"
+- "Monthly retainer"
+- Twelve-line schedule with monthly breakouts
+
+When fee_period should be null:
+- Source disclosure doesn't explicitly state a period basis
+- Multi-line schedule without an unambiguous period header
+- You see a fee number but cannot determine what period it represents
+- Source is a press release / RFP announcement / IPS partner-page (these confirm relationships, not fee periods)
+
+**Critical rule: NULL is the honest disposition.** Never guess fee_period. If the period isn't explicitly disclosed in source text, leave fee_period as null. A correct null is more valuable than a confident-but-wrong period assignment - the schema gap that motivated this column (Audit 1 P2.7) was caused by the implicit "all fees are annual" assumption misleading users on quarterly disclosures.
+
+Defaults by source type (apply only when the disclosure aligns):
+- ACFR/CAFR Schedule of Investment Expenses with a fiscal-year header → \`annual\`
+- Board meeting packet fee schedules with the "Total Quarterly Charges to Funds" footer → \`quarterly\`
+- Press releases / RFP announcements / IPS partner pages → null (relationship-only sources)
+- Investment Policy Statement → null (typically no fee values)
+
+When fee_usd is null (fee not disclosed), also set fee_period to null - period basis is meaningful only when there is a fee value to qualify.
+
 **fee_year semantic.**
 
 fee_year is the calendar year of the fiscal-year-end the fee covers.
@@ -344,5 +387,6 @@ Mercer Investment Consulting       $890        $875
 - name_as_written: verbatim from document, max 200 chars.
 - source_excerpt: verbatim, 10-500 chars, includes section heading + firm + fee figure.
 - fee_usd: absolute dollars, null when not disclosed.
-- fee_year: integer (year of FYE), null when not derivable.`;
+- fee_year: integer (year of FYE), null when not derivable.
+- fee_period: one of 'annual' / 'quarterly' / 'ytd' / 'monthly', or null when period basis is not explicitly disclosed in source text. Default to 'annual' for ACFR Schedule of Investment Expenses with a fiscal-year header. Set null when fee_usd is also null.`;
 }

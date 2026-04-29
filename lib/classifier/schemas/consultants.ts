@@ -34,6 +34,24 @@ const mandateTypeEnum = z.enum(CONSULTANT_MANDATE_TYPES);
 export const CONSULTANT_CONFIDENCE_TIERS = ["high", "medium", "low"] as const;
 const confidenceEnum = z.enum(CONSULTANT_CONFIDENCE_TIERS);
 
+// Period basis the disclosed fee_usd represents. Mirrors the CHECK
+// constraint on plan_consultants.fee_period (added in
+// 20260428235210_add_fee_period_to_plan_consultants.sql).
+// 'annual'    = fiscal-year basis (default for ACFR/CAFR schedules)
+// 'quarterly' = single-quarter accrual (board-meeting fee schedules)
+// 'ytd'       = year-to-date cumulative (rare)
+// 'monthly'   = monthly retainer (rare)
+// null        = period not explicitly disclosed in source. NULL is the
+//               honest disposition; the prompt instructs the classifier
+//               to leave fee_period null rather than guess.
+export const CONSULTANT_FEE_PERIODS = [
+  "annual",
+  "quarterly",
+  "ytd",
+  "monthly",
+] as const;
+const feePeriodEnum = z.enum(CONSULTANT_FEE_PERIODS);
+
 // Sonnet sometimes returns numeric fields as strings ("$2,445" /
 // "2445.00" / "null"). Mirror the cafr-allocation.ts coercion pattern.
 const isNullLike = (v: string): boolean =>
@@ -96,6 +114,11 @@ const consultantSchema = z.object({
     .union([z.number().int().min(2000).max(2030), stringToIntOrNull])
     .nullable(),
 
+  // Period basis the captured fee_usd represents. See
+  // CONSULTANT_FEE_PERIODS comment above. NULL is honest disposition
+  // when source doesn't explicitly disclose the period.
+  fee_period: feePeriodEnum.nullable(),
+
   // Verbatim window from the source confirming this entry. Used in the
   // /pensions/[slug] verification UI; should include the section heading
   // + firm name + fee number when all three are present.
@@ -156,6 +179,12 @@ export const recordConsultantsToolSchema: Tool = {
               description:
                 "Calendar year of the fiscal-year-end the fee covers. FY ending 2025-06-30 -> 2025. FY ending 2024-12-31 -> 2024. FY ending 2024-09-30 -> 2024. Null if the fee is disclosed without a clear fiscal-year context.",
             },
+            fee_period: {
+              type: ["string", "null"],
+              enum: [...CONSULTANT_FEE_PERIODS, null],
+              description:
+                "Period basis for fee_usd. 'annual' for fiscal-year disclosures (default for ACFR Schedule of Investment Expenses). 'quarterly' when the schedule footer explicitly says 'Total Quarterly Charges to Funds' or the section is a single-quarter accrual (board-meeting packets). 'ytd' for cumulative year-to-date schedules. 'monthly' for monthly retainers (rare). Null when the period basis is NOT explicitly disclosed in source text; never guess. NULL is honest disposition.",
+            },
             source_excerpt: {
               type: "string",
               description:
@@ -179,6 +208,7 @@ export const recordConsultantsToolSchema: Tool = {
             "mandate_type",
             "fee_usd",
             "fee_year",
+            "fee_period",
             "source_excerpt",
             "source_page",
             "confidence",

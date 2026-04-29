@@ -186,12 +186,13 @@ async function processOnePlan(
     // (xmax = 0) trick distinguishes inserted vs updated rows.
     const r = await pgClient.query<{ inserted: boolean }>(
       `insert into public.plan_consultants (
-         plan_id, consultant_id, mandate_type, fee_usd, fee_year,
+         plan_id, consultant_id, mandate_type, fee_usd, fee_year, fee_period,
          source_document_id, source_excerpt, source_type
-       ) values ($1, $2, $3, $4, $5, $6, $7, 'cafr_extraction')
+       ) values ($1, $2, $3, $4, $5, $6, $7, $8, 'cafr_extraction')
        on conflict (plan_id, consultant_id, mandate_type, fee_year)
        do update set
          fee_usd = excluded.fee_usd,
+         fee_period = excluded.fee_period,
          source_excerpt = excluded.source_excerpt,
          source_document_id = excluded.source_document_id,
          updated_at = now()
@@ -202,6 +203,7 @@ async function processOnePlan(
         c.mandate_type,
         c.fee_usd,
         c.fee_year,
+        c.fee_period,
         docId,
         c.source_excerpt,
       ],
