@@ -20,6 +20,18 @@ This file is auto-loaded by Claude Code at session start.
 - Pattern check after every defect resolution
 - Audit doc updates dated at moment of resolution
 
+## Reporting requirements for multi-operation work
+
+When the user requests multiple discrete operations in a single prompt, the closeout report must state, per operation:
+
+- **Operation N: DONE / NOT DONE / PARTIAL**
+- Specifically what changed - file paths and line numbers
+- Verification of correctness - compile clean? test passed? what was checked?
+
+Don't compress. If something is partial, say partial and explain what's left. Do not consolidate operations into a single summary. Do not bury non-completion in a "follow-ups" section of a findings doc.
+
+Operations the user explicitly requested are not "follow-ups not blocking." If an operation cannot be done in the requested turn, stop and report the structural reason - do not silently defer.
+
 ## What to do if confused or context is unclear
 
 Stop and ask the user. Do not proceed with assumptions on strategic decisions. Tactical decisions can be made and flagged.
