@@ -56,6 +56,10 @@ import type { Tool } from "@anthropic-ai/sdk/resources/messages";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CLASSIFIER_MODEL } from "../classifier/extract";
+import {
+  applyVerificationToRelatedSignals,
+  type MultiplierUpdate,
+} from "./pipeline";
 
 export const VERIFIER_VERSION = "v1.1-allocation";
 
@@ -340,6 +344,50 @@ export async function persistVerification(
     throw new Error(`insert failed: ${error?.message ?? "no row"}`);
   }
   return { id: inserted.id };
+}
+
+/**
+ * Verify a CAFR-IPS allocation pair, persist the verdict, and apply
+ * the confidence multiplier to related Type 2 signals if the verdict
+ * is confirming. Use this as the entry point from ingestion pipelines.
+ *
+ * The underlying primitives (`verifyCrossSource`, `persistVerification`,
+ * `applyVerificationToRelatedSignals`) remain exported for callers that
+ * need finer control - e.g., backfill scripts that already have the
+ * verdict and only need to persist + apply.
+ */
+export async function verifyPersistAndApply(
+  supabase: SupabaseClient,
+  recordA: AllocationRecord,
+  recordB: AllocationRecord,
+): Promise<{
+  verification: VerificationResult;
+  verificationId: string;
+  multiplierUpdate: MultiplierUpdate | null;
+}> {
+  const verification = await verifyCrossSource(recordA, recordB);
+  const { id: verificationId } = await persistVerification(supabase, {
+    recordA,
+    recordB,
+    result: verification,
+  });
+
+  const isConfirming =
+    verification.verification_type === "confirms" ||
+    verification.verification_type === "partially_confirms" ||
+    verification.verification_type === "policy_changed";
+
+  // recordA and recordB share plan_id + asset_class by construction
+  // (buildVerifiablePairs filters on these). Use recordA as the source
+  // of truth for the multiplier scope.
+  const multiplierUpdate = isConfirming
+    ? await applyVerificationToRelatedSignals(supabase, {
+        planId: recordA.plan_id,
+        assetClass: recordA.asset_class,
+      })
+    : null;
+
+  return { verification, verificationId, multiplierUpdate };
 }
 
 /**

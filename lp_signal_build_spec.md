@@ -115,16 +115,18 @@ A meaningful change to annual deployment pacing.
 ### Priority scoring
 
 Each signal scored 0-100, surfaced in dashboard ranked by score:
-score =
-base_type_score (40 if Type 1 else 25 if Type 2 else 10 if Type 3)
 
-size_multiplier (0-30 based on dollar magnitude)
-recency_multiplier (0-15 based on days since signal date)
-plan_tier_multiplier (0-15 based on plan AUM)
-verification_multiplier (0-10 based on cross-source confirmation count)
+```
+priority_score =
+  base_type_score (40 if Type 1 else 25 if Type 2 else 10 if Type 3)
+  + size_multiplier (0-30 based on dollar magnitude)
+  + recency_multiplier (0-15 based on days since signal date)
+  + plan_tier_multiplier (0-15 based on plan AUM)
+```
 
+This is prompt-driven, not a trained model at v1. The classifier outputs `priority_score` directly. Move to trained model when feedback loop produces enough labeled data (Month 6+).
 
-This is prompt-driven, not a trained model at v1. The classifier outputs the score directly. Move to trained model when feedback loop produces enough labeled data (Month 6+).
+**Cross-source verification weight is applied as a multiplier per Section 3, computed and stored separately from `priority_score` in `signals.confidence_multiplier`.** Display logic computes the effective rank as `priority_score * confidence_multiplier`. The two columns stay separate so that the classifier-emitted base score and the verification-derived bonus are independently observable. Multiplier values: 1.0 single-source / 1.5 two-source / 2.0 three+ source, where each "source" is a distinct confirming verification (`confirms` / `partially_confirms` / `policy_changed`). `conflicts` and `unrelated` verdicts do not contribute. (Spec resolution 2026-04-30: v2 had a contradictory `verification_multiplier (0-10)` additive component in this formula. Resolved in v3 to keep verification weighting strictly multiplicative per Section 3.)
 
 ---
 
