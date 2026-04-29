@@ -25,6 +25,7 @@
     { "path": "/api/cron/scrape-calpers-ips", "schedule": "0 19 * * 1" },
     { "path": "/api/cron/scrape-nyscrf-ips", "schedule": "0 19 * * 2" },
     { "path": "/api/cron/scrape-oregon-ips", "schedule": "0 19 * * 3" },
+    { "path": "/api/cron/scrape-calstrs-ips", "schedule": "0 19 * * 4" },
 
     { "path": "/api/cron/scraper-health-check", "schedule": "0 19 * * *" }
   ]
