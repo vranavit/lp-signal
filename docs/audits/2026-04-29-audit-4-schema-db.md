@@ -52,7 +52,7 @@ This audit does **not** examine:
 |---|---|---|
 | P0 | 0 | 0 |
 | P1 | 1 | **0 (P4.3 RESOLVED 2026-04-29)** |
-| P2 | 5 | 5 |
+| P2 | 5 | **3** (P4.1 + P4.2 RESOLVED 2026-04-29 via 5-phase fee_period cluster fix; P4.4–P4.6 remain open) |
 | P3 | 1 | 1 |
 
 P0: none. **P1: one** — P4.3 migration tracking (per user
@@ -89,6 +89,20 @@ implicit "fee_usd is annual" assumption.
 **Severity: P2.** **Status: OPEN.** To be resolved via the
 migration proposed in Sub-audit 4.5.
 
+**Resolution (2026-04-29)**: schema migration shipped in
+Phase 1 of Fix 5 cluster (commit `ec59577` —
+`supabase/migrations/20260428235210_add_fee_period_to_plan_consultants.sql`).
+The `fee_period` column was added to `public.plan_consultants`
+with a CHECK constraint allowing `'annual'` / `'quarterly'` /
+`'ytd'` / `'monthly'` or NULL. Phase 2 backfilled 55 of 75
+existing rows; Phase 3 wired the classifier; Phase 4 wired
+the UI. Cross-references **Audit 1 P2.7** (same finding,
+different audit) and **Audit 4 P4.2** (code-side companion).
+Resolved together as a 5-phase cluster — see Audit 1 P2.7 for
+the full narrative.
+
+**Status: RESOLVED.**
+
 ### P4.2 (pre-loaded from Audit 2 P2.3 surface) — Code-side companion to fee_period gap
 
 Audit 2 confirmed zero references to `fee_period`,
@@ -100,6 +114,20 @@ UI rendering update to display the period unit alongside
 fee_usd.
 
 **Severity: P2.** **Status: OPEN.**
+
+**Resolution (2026-04-29)**: code-side companion to the
+schema gap closed by Phase 3 of Fix 5 cluster (commit
+`b0c361b`). Classifier prompt updated with a new
+"fee_period semantic" section in
+`lib/classifier/prompts/consultants.ts`; Zod schema +
+tool-input schema updated in
+`lib/classifier/schemas/consultants.ts`; insert path updated
+in `scripts/backfill-consultants.ts`. Phase 4 (commit
+`0f15404`) added the UI render. Cross-references **Audit 2
+P2.3** (same finding, different audit) and **Audit 1 P2.7**
+(schema parent). Resolved together as a 5-phase cluster.
+
+**Status: RESOLVED.**
 
 ### P4.3 (new) — No Supabase CLI migration tracking
 

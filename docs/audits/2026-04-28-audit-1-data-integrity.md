@@ -57,7 +57,7 @@ plus the 18-row `consultants` master list and the joined
 |---|---|---|
 | P0 | 0 | 0 |
 | P1 | 3 | **0 (all resolved 2026-04-28)** |
-| P2 | 7 | **1** (P2.1–P2.5 resolved 2026-04-28; P2.6 ESCALATED with concrete 7-firm gap + UI mitigation; only P2.7 schema gap remains open, cross-referenced to Audit 4) |
+| P2 | 7 | **0 + 1 ESC** (P2.1–P2.5 resolved 2026-04-28; P2.6 ESCALATED with concrete 7-firm gap + UI mitigation; P2.7 RESOLVED 2026-04-29 via 5-phase fee_period cluster fix) |
 | P3 | 2 | 2 |
 
 No blocking integrity defects. All three P1 items resolved in-
@@ -401,6 +401,54 @@ many plans).
 
 **Severity: P2.** **Status: OPEN.** Cross-references Audit 4.
 **Owner**: Audit 4 schema review.
+
+**Resolution (2026-04-29)**: full cross-audit cluster fix
+shipped across 5 commits:
+
+- **Phase 1** (commit `ec59577`): schema migration adding
+  `fee_period` column to `plan_consultants` with CHECK
+  constraint allowing `'annual'` / `'quarterly'` / `'ytd'` /
+  `'monthly'` / NULL.
+- **Phase 2** (commit `77de487`): backfilled existing 75 rows.
+  53 CAFR-extracted rows tagged `'annual'` (CAFR source
+  convention). 2 SWIB StepStone rows tagged `'quarterly'` per
+  Audit 1 Phase 4 deep-scan finding the "Total Quarterly
+  Charges to Funds" footer. 20 manual rows with `fee_usd =
+  NULL` kept at `fee_period = NULL` (structurally orphan).
+  Critical invariant: zero rows have `fee_period = NULL` with
+  `fee_usd` populated.
+- **Phase 3** (commit `b0c361b`): classifier prompt updated to
+  capture `fee_period` from new source disclosures. Live test
+  against CalPERS FY2025 ACFR confirmed every extracted row
+  correctly receives `fee_period: "annual"` inferred from
+  Schedule of Investment Expenses context. NULL is honest
+  disposition when period isn't disclosed.
+- **Phase 4** (commit `0f15404`): UI render of `fee_period`
+  alongside `fee_usd`. Pension page now displays
+  `$2.4M /year FY25` for annual retainers, `$60K /quarter` for
+  quarterly accruals, etc. When `fee_period` is NULL, no
+  period suffix is shown (honest fallback).
+- **Phase 5** (this commit): audit doc closure across 4
+  cross-audit findings (Audit 1 P2.7, Audit 2 P2.3, Audit 4
+  P4.1 + P4.2).
+
+**What's now possible**: SWIB-style quarterly disclosures can
+be captured honestly without forcing them into an annual
+rendering. Future quarterly fee values won't render
+misleadingly as if annual. The classifier auto-populates
+period basis on new extractions; manual research rows can be
+tagged when period is known.
+
+**What remains**: the SWIB StepStone rows have `fee_period =
+'quarterly'` set, but `fee_usd` stays NULL pending the firm-
+level disambiguation deferred under Audit 1 P2.3 reframe (the
+Q4 2021 $0.5M total covered multiple firms; can't be split
+without speculation). When primary SWIB disclosures of a
+quarterly StepStone fee surface, both `fee_usd` and
+`fee_period` are now ready to receive them, and the UI will
+render correctly.
+
+**Status: RESOLVED.**
 
 ---
 

@@ -4,6 +4,24 @@ Comprehensive 5-audit pass conducted at end of Workstream 2
 Phase A. All 20 active plans now have consultant data; 75
 plan_consultants rows shipped on commit f076118.
 
+## Today's fixes (2026-04-29)
+
+Five fixes committed in sequence, addressing the top-5
+priorities from the 5-audit close-out. Seven audit findings
+closed in total across the session.
+
+| Fix | Closes | Commit(s) |
+|---|---|---|
+| 1 | Audit 5 P5.1 (handle_new_user privilege escalation) | `d1363e4` |
+| 2 | Audit 4 P4.3 (Supabase CLI migration tracking) | `5292b8f` |
+| 3 | Audit 3 P2.1, P2.2, P3.H (route-segment error/loading/not-found) | `20abd67` |
+| 4 | Audit 5 P5.5 (CI workflow) | `ec77809`, `2a767a6` (reframe) |
+| 5 | Audit 1 P2.7 + Audit 2 P2.3 + Audit 4 P4.1 + Audit 4 P4.2 (fee_period cluster) | `ec59577`, `77de487`, `b0c361b`, `0f15404`, [Phase 5 closure] |
+
+The Fix 5 cluster was a 5-phase coordinated change spanning
+schema (Phase 1), backfill (Phase 2), classifier (Phase 3), UI
+(Phase 4), and audit doc closure (Phase 5).
+
 ## Baseline state at audit start
 
 - Type-check: clean (pnpm tsc --noEmit exit 0)
@@ -39,13 +57,13 @@ plan_consultants rows shipped on commit f076118.
 - 0 P0, 3 P1 (all resolved in-session), 7 P2 (5 resolved + 1 escalated + 1 open), 2 P3
 - All three P1 items closed: LACERA Meketa aggregate-line bug, TRS Texas FY23 staleness, NYSCRF Aksia mandate-split
 - P2.6 (LACERA re-extraction) ESCALATED with concrete 7-firm gap + UI mitigation; full re-extraction queued for next consultant-extraction iteration
-- P2.7 (no `fee_period` column) cross-referenced to Audit 4
+- ~~P2.7 (no `fee_period` column) cross-referenced to Audit 4~~ **RESOLVED 2026-04-29** by Fix 5 (5-phase cluster: schema + backfill + classifier + UI + doc closure)
 
 ### Audit 2 (Code Quality) — completed 2026-04-29
 
 - 0 P0, 0 P1, 3 P2, 4 P3
 - Codebase fundamentally clean: no TODO/FIXME, no SQL injection patterns, no insecure env fallbacks
-- All P2s are classifier-prompt or schema-companion findings cross-referenced to Audit 1
+- All P2s are classifier-prompt or schema-companion findings cross-referenced to Audit 1 — **P2.3 (fee_period code companion) RESOLVED 2026-04-29 by Fix 5**; P2.1 + P2.2 classifier-prompt items remain open
 - Test suite absence flagged for Audit 5
 
 ### Audit 3 (Visual / UX) — completed 2026-04-29 (CODE-SIDE ONLY)
@@ -62,7 +80,7 @@ plan_consultants rows shipped on commit f076118.
 
 - 0 P0, 1 P1, 5 P2, 1 P3
 - ~~P4.3 (P1)~~: ~~No Supabase CLI migration tracking — 41 local .sql files, no `supabase_migrations.schema_migrations` table; migrations applied ad-hoc via `scripts/apply-migration.ts`. Blocks parallel dev / branch envs / onboarding.~~ **RESOLVED 2026-04-29**: Supabase CLI adopted, 42 migrations reconciled to tracker via `supabase migration repair --status applied`, schema invariants verified unchanged. Migrations workflow documented in `docs/migrations-workflow.md`.
-- P4.1 + P4.2 (P2): fee_period column missing on plan_consultants + code companion gap (cross-ref Audit 1 P2.7 / Audit 2 P2.3). Migration drafted in Sub-audit 4.5; backfill plan included.
+- ~~P4.1 + P4.2 (P2)~~: ~~fee_period column missing on plan_consultants + code companion gap (cross-ref Audit 1 P2.7 / Audit 2 P2.3). Migration drafted in Sub-audit 4.5; backfill plan included.~~ **RESOLVED 2026-04-29** by Fix 5 (5-phase cluster: schema migration + backfill + classifier + UI + doc closure across commits `ec59577` → `0f15404`)
 - P4.4 (P2): 5 FK columns missing indexes (pension_allocations.source_document_id, plan_consultants.source_document_id, rejected_signals.document_id, signals.document_id, user_profiles.firm_id) — performance impact grows with dataset.
 - P4.5 (P2): `gps` table is the only public table with RLS disabled; consistency gap.
 - P4.6 (P2): `asset_class` CHECK enum drifts between pension_allocations (9 values) and signals/rejected_signals (6 values) — duplicate CHECK constraints will drift on each new class addition.
@@ -174,3 +192,37 @@ plan_consultants rows shipped on commit f076118.
 - **Schema operational hardening** — migration tracking (P4.3), missing indexes (P4.4), `gps` RLS (P4.5), asset_class enum drift (P4.6).
 - **Production readiness baseline** — secret rotation procedures (P5.3), rate limiting (P5.7), backup/restore docs (P5.10).
 - **Long-tail UI polish** — error.tsx / loading.tsx / not-found.tsx for `pensions/[slug]` (Audit 3 P2.1, P2.2, P3.H), tooltip accessibility (P3.E), empty-state findings (P3.A/B/C).
+
+---
+
+## Aggregate state at end of Day 18 (2026-04-29)
+
+| Audit | P0 | P1 open | P2 open | P3 open |
+|---|---|---|---|---|
+| 1 (Data) | 0 | 0 | 0 + 1 ESC (P2.6) | 2 |
+| 2 (Code) | 0 | 0 | 2 | 4 |
+| 3 (Visual) | 0 | 0 | 3 | 7 |
+| 4 (Schema) | 0 | 0 | 3 | 1 |
+| 5 (Prod) | 0 | 2 | 5 | 3 |
+| **Total** | **0** | **2** | **13 + 1 ESC** | **17** |
+
+**Day 18 close-out delta** (vs end of Day 17 / pre-fix-session):
+
+- **2 P1 closed** (P5.1 + P4.3 — both Day-18 morning fixes)
+- **5 P2 closed** (P4.1, P4.2, P2.7 cross-audit cluster; Audit 3 P2.1, P2.2; P5.5)
+- **1 P2 added** (Audit 3 P2.5 — dashboard-wide boundary file gap surfaced by Fix 3 pattern check)
+- **1 P3 closed** (Audit 3 P3.H not-found.tsx)
+- **1 P1 reframed** (P5.5 from "manual UI step pending" to "RESOLVED for CI workflow; enforcement deferred to backlog")
+
+**P1 status**: 2 open, both deferred per principled disposition:
+- **P5.4** (no error tracking / monitoring) — backlog; no monitoring SDK installed; surfacing requires a vendor pick (Sentry / Bugsnag / Datadog) which the user deferred at session start.
+- **P5.6** (no test suite) — backlog; aligned with the institutional standard that test infrastructure is a separate workstream from the audit-driven fixes.
+
+**Net institutional posture shift**: the platform now has CI
+on every push, migration tracking via Supabase CLI, audit-trail
+documentation for every fix, an extensible fee_period model
+(schema + classifier + UI), error/loading/not-found boundaries
+on the consultant page, and least-privilege default for new
+signups. Remaining open work is well-characterized in the audit
+docs with explicit cross-references; nothing is silently
+broken.

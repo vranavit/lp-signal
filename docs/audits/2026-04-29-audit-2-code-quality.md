@@ -47,7 +47,7 @@ This audit does **not** examine:
 |---|---|---|
 | P0 | 0 | 0 |
 | P1 | 0 | 0 |
-| P2 | 3 | 3 (all classifier-prompt and schema-companion items, all queued for the next consultant-extraction iteration) |
+| P2 | 3 | **2** (P2.3 RESOLVED 2026-04-29 via 5-phase fee_period cluster fix; P2.1 + P2.2 classifier-prompt items remain open) |
 | P3 | 4 | 4 (lint nits, operational logging style, dead-code tooling, error UX surface deferred to Audit 3) |
 
 No P0/P1 code-quality defects. The codebase is clean of hardcoded
@@ -384,6 +384,23 @@ update to render unit alongside figure (e.g., `$60K /quarter`).
 **Cross-reference**: **Audit 4** (Schema/DB) for the migration;
 **Audit 2** (this audit) for the classifier-prompt and UI
 follow-through.
+
+**Resolution (2026-04-29)**: code-side companion to the
+fee_period gap closed by Phase 3 of Fix 5 cluster (commit
+`b0c361b`). The classifier prompt now captures `fee_period`
+from source disclosures via a new "fee_period semantic"
+section with explicit indicators per value, and the insert
+path in `scripts/backfill-consultants.ts` passes it through
+to the database. Live test against CalPERS FY2025 ACFR
+confirmed every extracted row receives `fee_period: "annual"`
+correctly inferred from CAFR Schedule context. Phase 4
+(commit `0f15404`) added UI render of `fee_period` alongside
+`fee_usd` in `app/(dashboard)/pensions/[slug]/page.tsx`.
+Cross-references **Audit 1 P2.7**, **Audit 4 P4.1**, **Audit 4
+P4.2** — all resolved together as a 5-phase cluster. See
+Audit 1 P2.7 for the full narrative.
+
+**Status: RESOLVED.**
 
 ### Verdict
 
