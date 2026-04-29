@@ -499,12 +499,6 @@ lp-signal/
 - Mid-market PE: Thoma Bravo, Vista, Advent, Genstar, Hellman & Friedman
 - Placement agents: Eaton Partners, PJT Park Hill, Lazard, Moelis
 
-**Do NOT sell to ISQ.** Hard rule. Per v1 commercial notes:
-- Carve out blanket exclusion on selling to or soliciting ISQ before starting
-- Have explicit Outside Business Activity (OBA) conversation with ISQ Compliance
-- All Allocus work outside ISQ working hours, on personal equipment
-- This protects you and lets you honestly say "I built this for the broader PE market, not ISQ specifically."
-
 **North Star metric:** Prediction accuracy. Measured as: of the predictions Allocus makes about which plans will commit to a given asset class in the next 6 months, what percentage are correct? Target 60%+ at v1 (vs. ~10-15% baseline of "all 50 plans equally likely").
 
 Secondary metric: Signals-to-meeting ratio. Once design partners use it, track: of signals Allocus delivers, what percentage led to a meeting that resulted in an LP conversation? Target 5%+ for the tool to pay for itself at $15k.
@@ -533,7 +527,6 @@ The following will be resolved by Month 2-4 and trigger v3 of this spec:
 
 - What's the minimum viable predictive accuracy for first paid customer?
 - Pricing model details: annual seat, firm site license, or freemium?
-- ISQ OBA conversation timing and outcome
 - Predictive engine architecture: prompt-based stays the answer, or move to trained model?
 - Canadian plan coverage timing
 - Whether to incorporate Allocus as separate entity
