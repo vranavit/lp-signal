@@ -146,6 +146,16 @@ Actual Day 6: cross-source verifier v1.1 redesign (temporal pre-filter + policy_
 
 Net: pivoted from IPS scraper expansion to verifier hardening, driven by the Day 5 conflict-rate finding. The IPS scraper expansion remains queued for Week 2 alongside Mass PRIM IPS.
 
+## Spec deviation noted
+
+The original Day 6 spec called for temporal filtering only. During implementation, an additional `sub_class` structural filter was added in `buildVerifiablePairs()`. This filter drops pairs where both records have non-null `sub_class` and the values differ.
+
+Justification (post-hoc): All 11 dropped pairs would have been `unrelated` under the v1.0 verifier. The filter saves API calls and produces a cleaner audit table.
+
+Surfaced during Day 6 verification questions. Documented in the architecture doc as part of the eligibility filter spec for allocation-allocation pairing.
+
+Pattern reinforcement: spec deviations should be flagged at execution time, not at audit time. Future iterations of the verification pipeline should pause and confirm before adding filters or transformations beyond the original spec.
+
 ## Pattern check / institutional flags
 
 - The false positive on CalPERS Public Equity / Cap Weighted is a one-off in the current dataset but the underlying pattern (sub_class labels that look parent-level to a naive reader) will recur. Worth a v1.2 prompt iteration that explicitly enumerates "X Weighted", "X Active", "Smart Beta" type labels as sub-sleeve indicators. Defer until we see a second occurrence in real data.

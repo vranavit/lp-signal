@@ -51,6 +51,33 @@ Even within an IPS adoption window, plans can revise targets mid-cycle (between 
 
 `conflicts` is now reserved for genuine data quality flags. In the Day 6 re-run, 29 verified pairs produced 2 conflicts: 1 real (CalPERS Credit, the pre-identified mis-aggregation) and 1 false positive (CalPERS Public Equity / Cap Weighted misread by the model as parent-level rather than sub-sleeve).
 
+## Allocation-allocation eligibility filters
+
+Before invoking the LLM verifier, allocation pairs are filtered by two structural rules:
+
+### 1. Temporal eligibility
+
+Pairs are only retained when they describe the same policy generation. The CAFR's `as_of_date` must fall within the IPS's adoption window (defined as: from the IPS's effective date until the next IPS's effective date, or until present if no later IPS exists).
+
+Implementation: `buildVerifiablePairs()` in `lib/predictive/verify-cross-source.ts` handles this filter.
+
+Cross-generation pairs (e.g., CAFR FY2023 vs IPS effective 2024-01-01) are dropped. They describe different policies and cannot be meaningfully verified.
+
+### 2. Sub_class structural eligibility
+
+Pairs are dropped when both records have non-null `sub_class` AND the `sub_class` values differ. Such pairs describe different sleeves within the same parent asset class and would deterministically receive an `unrelated` verdict under v1.0.
+
+Pairs that ARE retained:
+- Both null `sub_class` (parent-parent comparison)
+- One null + one non-null (parent vs sub-sleeve, candidate for `partially_confirms`)
+- Both non-null with same `sub_class` string (sub-sleeve confirms candidate)
+
+Caveats:
+- Assumes `sub_class` labels are canonically normalized across plans. If two plans use functionally equivalent labels with different strings (e.g., "MBS" vs "Mortgage-Backed Securities"), the filter would drop them silently. No such case exists in the current 3-plan dataset.
+- Loses explicit `unrelated` audit trail for pre-filtered pairs. A future query of "how many pairs evaluated as unrelated" would undercount the structurally-impossible cases.
+
+TODO: When the dataset expands beyond 3 plans, evaluate a `sub_class` normalization layer. May need a canonical `sub_class` taxonomy maintained alongside the `asset_class` enum.
+
 ### `same_event` field
 
 The `VerificationResult.same_event` boolean is true when the verdict is `confirms`, `partially_confirms`, or `policy_changed`. It is false for `conflicts` and `unrelated`. Downstream signal weighting should treat `same_event=true` as "these records describe one plan-policy fact" and weight accordingly.
