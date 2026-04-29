@@ -3,6 +3,12 @@ import { buildClassifierPrompt } from "./prompt";
 import { buildGpPressReleasePrompt } from "./prompts/gp-press-release";
 import { buildPressReleasePrompt } from "./prompts/press-release";
 import { buildCafrAllocationPrompt } from "./prompts/cafr-allocation";
+import { buildIpsPrompt } from "./prompts/ips";
+import {
+  ipsResponseSchema,
+  recordIpsAllocationsToolSchema,
+  type IpsResponse,
+} from "./schemas/ips";
 import {
   classifierResponseSchema,
   recordSignalsToolSchema,
@@ -380,6 +386,86 @@ export async function extractSignalsFromPlanPressReleaseText(
     type: "text",
     text: `<press_release>\n${args.text}\n</press_release>`,
   });
+}
+
+export type IpsExtractResult = {
+  response: IpsResponse;
+  tokensUsed: number;
+  inputTokens: number;
+  outputTokens: number;
+  stopReason: string | null;
+};
+
+export type ExtractFromIpsTextArgs = {
+  text: string;
+  planName: string;
+  effectiveDateHint: string | null;
+};
+
+/**
+ * IPS allocation classifier entry. Takes the unpdf-extracted IPS body
+ * text from documents.content_text (populated at scrape time) and runs
+ * it through the IPS prompt + record_ips_allocations tool.
+ *
+ * Sister to extractAllocationsFromCafrText, but the IPS path is simpler:
+ * the scraper already ran unpdf at ingest time, so there is no PDF
+ * download/parse round-trip here.
+ */
+export async function extractIpsAllocationsFromText(
+  args: ExtractFromIpsTextArgs,
+): Promise<IpsExtractResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("missing ANTHROPIC_API_KEY");
+
+  const client = new Anthropic({ apiKey });
+
+  const prompt = buildIpsPrompt({
+    planName: args.planName,
+    effectiveDateHint: args.effectiveDateHint,
+  });
+
+  const message = await client.messages.create({
+    model: CLASSIFIER_MODEL,
+    max_tokens: 4096,
+    tools: [recordIpsAllocationsToolSchema],
+    tool_choice: { type: "tool", name: "record_ips_allocations" },
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `<ips>\n${args.text}\n</ips>`,
+          },
+          { type: "text", text: prompt },
+        ],
+      },
+    ],
+  });
+
+  const toolUse = message.content.find(
+    (b): b is Extract<typeof b, { type: "tool_use" }> => b.type === "tool_use",
+  );
+  if (!toolUse || toolUse.name !== "record_ips_allocations") {
+    throw new Error(
+      `ips classifier did not call record_ips_allocations tool (stop_reason=${message.stop_reason})`,
+    );
+  }
+
+  const parsed = ipsResponseSchema.safeParse(toolUse.input);
+  if (!parsed.success) {
+    throw new Error(
+      `ips classifier output failed schema validation: ${parsed.error.message}`,
+    );
+  }
+
+  return {
+    response: parsed.data,
+    inputTokens: message.usage.input_tokens,
+    outputTokens: message.usage.output_tokens,
+    tokensUsed: message.usage.input_tokens + message.usage.output_tokens,
+    stopReason: message.stop_reason,
+  };
 }
 
 export type ExtractFromAgendaExcerptArgs = {

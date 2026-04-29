@@ -10,6 +10,7 @@ import {
   extractAllocationsFromCafrPdf,
   extractAllocationsFromCafrPdfFile,
   extractAllocationsFromCafrText,
+  extractIpsAllocationsFromText,
   type ExtractResult,
 } from "./extract";
 import {
@@ -25,6 +26,8 @@ import { PROMPT_VERSION } from "./prompt";
 import { GP_PROMPT_VERSION } from "./prompts/gp-press-release";
 import { PRESS_RELEASE_PROMPT_VERSION } from "./prompts/press-release";
 import { CAFR_PROMPT_VERSION } from "./prompts/cafr-allocation";
+import { IPS_PROMPT_VERSION } from "./prompts/ips";
+import type { IpsAllocation } from "./schemas/ips";
 import { computePriorityScore } from "./score";
 import type { ClassifiedSignal } from "./schema";
 import type { CafrAllocation } from "./schemas/cafr-allocation";
@@ -125,12 +128,38 @@ export async function classifyDocument(
   const isGpPressRelease = doc.document_type === "gp_press_release";
   const isPlanPressRelease = doc.document_type === "press_release";
   const isCafr = doc.document_type === "cafr";
+  const isInvestmentPolicy = doc.document_type === "investment_policy";
 
   // Pre-flight validation (before marking status = processing). Per-route:
   //   PDF (board minutes / agenda packet / CAFR): requires plan + non-transcript URL.
   //   GP press release (text): requires gp + content_text.
   //   Plan press release (text): requires plan + content_text.
-  if (isGpPressRelease) {
+  //   IPS (text): requires plan + content_text (text extracted at scrape time).
+  if (isInvestmentPolicy) {
+    if (!plan || !doc.content_text) {
+      await supabase
+        .from("documents")
+        .update({
+          processing_status: "error",
+          error_message: !plan
+            ? "ips_requires_plan"
+            : "ips_missing_content_text",
+          processed_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+      return {
+        documentId,
+        ok: false,
+        reason: !plan ? "missing_plan" : "missing_content_text",
+        signalsExtracted: 0,
+        signalsInserted: 0,
+        signalsAccepted: 0,
+        signalsPreliminary: 0,
+        signalsRejected: 0,
+        tokensUsed: 0,
+      };
+    }
+  } else if (isGpPressRelease) {
     if (!gp || !doc.content_text) {
       await supabase
         .from("documents")
@@ -236,6 +265,16 @@ export async function classifyDocument(
     // CAFR path diverges early — it writes to pension_allocations, not signals.
     if (isCafr) {
       return await classifyCafr(supabase, doc, plan as { id: string; name: string; tier: number | null });
+    }
+
+    // IPS path also writes to pension_allocations (target rows only). Text
+    // is already extracted at scrape time, so no PDF round-trip here.
+    if (isInvestmentPolicy) {
+      return await classifyIps(
+        supabase,
+        doc,
+        plan as { id: string; name: string },
+      );
     }
 
     let extract: ExtractResult;
@@ -893,6 +932,142 @@ export async function classifyCafrFromBytes(
     tokensUsed,
     pages: pageCount,
     confidences: response.allocations.map((a) => a.confidence),
+  };
+}
+
+// ── IPS allocation extraction ───────────────────────────────────────────────
+// Writes target rows to pension_allocations alongside CAFR-derived rows.
+// IPS rows: target_pct populated, actual_pct/actual_usd/total_plan_aum_usd
+// left null. Confidence bands match the CAFR path:
+//   accept ≥ 0.85 → preliminary=false
+//   0.70-0.85    → preliminary=true
+//   < 0.70       → dropped (console-warned, not persisted)
+
+type IpsDoc = {
+  id: string;
+  plan_id: string;
+  content_text: string | null;
+  meeting_date: string | null;
+  source_url: string | null;
+  created_at?: string;
+};
+
+async function classifyIps(
+  supabase: SupabaseClient,
+  doc: IpsDoc,
+  plan: { id: string; name: string },
+): Promise<ClassifyOutcome> {
+  if (!doc.content_text) {
+    await markDocError(supabase, doc.id, "ips_missing_content_text");
+    return zeroOutcome(doc.id, "ips_missing_content_text");
+  }
+
+  const extract = await extractIpsAllocationsFromText({
+    text: doc.content_text,
+    planName: plan.name,
+    effectiveDateHint: doc.meeting_date,
+  });
+  const { response, tokensUsed } = extract;
+
+  const accepted: IpsAllocation[] = [];
+  const preliminary: IpsAllocation[] = [];
+  const dropped: IpsAllocation[] = [];
+
+  for (const a of response.target_allocations) {
+    if (a.confidence < ALLOCATION_PRELIMINARY_CONFIDENCE) {
+      dropped.push(a);
+      continue;
+    }
+    if (a.confidence >= ALLOCATION_ACCEPT_CONFIDENCE) accepted.push(a);
+    else preliminary.push(a);
+  }
+
+  // Dedup on (asset_class, sub_class) — same key shape as the CAFR path,
+  // matches the pension_allocations partial unique index.
+  const dedupMap = new Map<string, IpsAllocation>();
+  const dupDropped: IpsAllocation[] = [];
+  for (const a of [...accepted, ...preliminary]) {
+    const key = `${a.asset_class}::${a.sub_class ?? ""}`;
+    const existing = dedupMap.get(key);
+    if (!existing || a.confidence > existing.confidence) {
+      if (existing) dupDropped.push(existing);
+      dedupMap.set(key, a);
+    } else {
+      dupDropped.push(a);
+    }
+  }
+  if (dupDropped.length > 0) {
+    console.warn(
+      `[classifier/ips] deduplicated ${dupDropped.length} duplicate allocations ` +
+        `(doc=${doc.id}): ${dupDropped.map((d) => `${d.asset_class}${d.sub_class ? "/" + d.sub_class : ""}@${d.confidence.toFixed(2)}`).join(", ")}`,
+    );
+  }
+
+  // as_of_date precedence: explicit effective_date from the IPS body →
+  // doc.meeting_date (if scraper populated one) → today (last resort).
+  // The IPS scraper today does not populate meeting_date, so this almost
+  // always falls through to effective_date or today.
+  const effectiveDate =
+    response.effective_date ??
+    doc.meeting_date ??
+    (doc.created_at ? doc.created_at.slice(0, 10) : null) ??
+    new Date().toISOString().slice(0, 10);
+
+  const toInsert = [...dedupMap.values()].map((a) => ({
+    plan_id: plan.id,
+    as_of_date: effectiveDate,
+    asset_class: a.asset_class,
+    sub_class: a.sub_class ?? null,
+    target_pct: a.target_pct,
+    target_min_pct: a.target_min_pct ?? null,
+    target_max_pct: a.target_max_pct ?? null,
+    actual_pct: null,
+    actual_usd: null,
+    total_plan_aum_usd: null,
+    source_document_id: doc.id,
+    source_page: 1,
+    source_quote: a.source_quote,
+    confidence: a.confidence,
+    preliminary: a.confidence < ALLOCATION_ACCEPT_CONFIDENCE,
+    prompt_version: IPS_PROMPT_VERSION,
+  }));
+
+  let insertedCount = 0;
+  if (toInsert.length > 0) {
+    const { error, count } = await supabase
+      .from("pension_allocations")
+      .insert(toInsert, { count: "exact" });
+    if (error) throw new Error(`ips_allocation_insert_failed: ${error.message}`);
+    insertedCount = count ?? toInsert.length;
+  }
+
+  if (dropped.length > 0) {
+    console.warn(
+      `[classifier/ips] dropped ${dropped.length} allocations below confidence threshold ` +
+        `(doc=${doc.id}): ${dropped.map((d) => `${d.asset_class}@${d.confidence.toFixed(2)}`).join(", ")}`,
+    );
+  }
+
+  await supabase
+    .from("documents")
+    .update({
+      processing_status: "complete",
+      processed_at: new Date().toISOString(),
+      api_tokens_used: tokensUsed,
+      error_message: null,
+    })
+    .eq("id", doc.id);
+
+  return {
+    documentId: doc.id,
+    ok: true,
+    signalsExtracted: response.target_allocations.length,
+    signalsInserted: insertedCount,
+    signalsAccepted: accepted.length,
+    signalsPreliminary: preliminary.length,
+    signalsRejected: dropped.length,
+    tokensUsed,
+    confidences: response.target_allocations.map((a) => a.confidence),
   };
 }
 
