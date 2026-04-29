@@ -115,3 +115,46 @@ Implementation phase. Three concrete fixes:
 - Initial Week 1 hypotheses about the CalSTRS gaps were wrong. The pattern: when a cross-source value gap is observed, the default explanation should NOT be "extraction error." Most CAFR allocation tables are clean; the more common cause is the source itself encoding multiple legitimate values (Strategic vs Interim, multi-year drift) that look like discrepancies until you read the source PDF.
 - Day 9 surfaced that **the CalPERS CAFR has two distinct policy target tables** that the v1.2-cafr prompt does not disambiguate. This is a prompt-side gap, not an extraction-side error per se. Other plans likely have similar dual-table structures (Strategic vs Interim, Long-term vs Transition); the fix needs to generalize.
 - The verifier's `confirms` verdict on CalPERS PE 17%-vs-17% is artificial. Both extractions are reading from the Strategic table, so they "agree" but neither captures the actual operational target (15.0%). This is why source document audits remain necessary as a check on the verifier output, even when verdicts are `confirms`.
+
+## Day 10 architectural decisions (queued from Day 9 cleanup)
+
+Two architectural decisions surfaced tonight that compound each other. Both need resolution before the Day 10 classifier fix.
+
+### Decision 1: Strategic vs Interim target table
+
+CalPERS CAFR contains both Strategic Asset Allocation (p.60, long-term board-adopted) and Interim Policy Target (p.126, in-effect during transition) tables. Both are legitimate GASB disclosures. Other plans may have similar distinctions.
+
+Options:
+- A: Always extract Strategic (aligns with IPS)
+- B: Always extract Interim (captures in-effect today)
+- C: Extract both with explicit table_basis column
+
+Resolution required before Day 10 prompt fix.
+
+### Decision 2: document_type='cafr' taxonomy
+
+Day 9 cleanup investigation revealed document_type='cafr' is being used as a catchall across 20 plans. Of 16+ documents tagged 'cafr':
+- ~4-5 are actual CAFRs
+- ~7 are annual reports (different from CAFR)
+- 2 are quarterly investment reports
+- 1 is a Popular Annual Financial Report (summary)
+- 2 are board agenda items
+- 1 is "fund insights" document
+
+All tagged the same. CHECK constraint allows finer types (annual_report, performance_report, agenda_packet) but scrapers underuse them.
+
+Implications:
+- Cross-source verification semantics partially invalid when "CAFR allocation" actually means "annual or quarterly disclosure"
+- Some of the 178 CAFR-derived allocations come from point-in-time snapshots (quarterly), not policy targets
+- Document audit needed to know what fraction of existing extractions are policy targets vs other things
+
+Resolution options:
+- A: Re-tag misclassified docs, audit each existing allocation against source
+- B: Add document_subtype column for finer typology, keep existing tags
+- C: Accept current taxonomy, document the noise
+
+### Compounded scope
+
+Decision 2 affects Decision 1: if we don't know which documents are real CAFRs, we don't know which extractions represent the Strategic-vs-Interim distinction at all. Quarterly reports don't have Strategic/Interim - they have current actuals.
+
+Day 10 will likely begin with audit work to scope the decision rather than directly implementing a prompt fix.
