@@ -145,6 +145,18 @@ This pairing is more interesting because it can produce predictive signals: aggr
 5. Smoke-test against a small known set before turning on automated verification.
 6. Document the calibration in the source_verifications schema or a sibling table so downstream confidence weighting can compose verdicts across pairing types.
 
+## Known scaling concerns
+
+### Polymorphic source_verifications associations
+
+`source_verifications.record_a_id` and `record_a_type` (similarly `record_b_id`, `record_b_type`) are polymorphic - they point to rows in `pension_allocations`, `signals`, or `consultants` tables based on the type field. This means no PostgreSQL foreign key constraint, and queries must do two `.in()` calls + app-level merge.
+
+At Day 8 scale (29 verifications), this is fine. At 1000+ verifications, the dual-query pattern becomes a performance concern.
+
+Mitigation when scale demands: add denormalized columns (`plan_id`, `asset_class`) directly on `source_verifications` for the common allocation-allocation case. Other pairings retain polymorphic lookup.
+
+Not blocking; revisit when verification volume passes ~500 rows or when query latency on related-signal lookup exceeds 100ms.
+
 ## Open questions
 
 - **Confidence weighting math.** Spec Section 5e says single-source = 1.0, 2-source confirmation = 1.5, 3-source = 2.0. Should `policy_changed` count toward the multi-source weight? Probably yes, but the math needs spelling out before pipeline integration in Day 7.
