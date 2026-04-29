@@ -17,7 +17,7 @@ The function had cheap pre-checks for plan_id and asset_class, but no temporal p
 Day 5 ran the verifier on 48 (CAFR, IPS) pairs across CalPERS, CalSTRS, and Oregon. The result distribution was 18 confirms / 7 partially_confirms / 9 conflicts / 14 unrelated. The 9 conflicts were investigated pre-Day-6 and categorized:
 
 - 7 of 9 were time-period artifacts: CalSTRS CAFRs from FY2023 (June 2023) compared against the IPS adopted Jan 2024. The values legitimately differed because the policy was different in those generations.
-- 1 of 9 was a real data quality issue: CalPERS Credit IPS at 8% vs CAFR at 3.5%, where the CAFR extraction had likely captured a Private Debt sub-sleeve and labeled it the Credit parent.
+- 1 of 9 was reframed by Day 9 source-document inspection: CalPERS Credit IPS at 8% vs CAFR at 3.5%. Originally hypothesized as a CAFR sub-sleeve mis-aggregation. Day 9 PDF inspection showed the CAFR contains two target tables - a Strategic Asset Allocation table at p.60 (Private Debt 8%) and an Interim Policy Target table at p.126 (Private Debt 3.5%). The CAFR row in the database (3.5%) was correctly extracted from the Interim table; the IPS value (8%) reflects the Strategic target also shown on p.60. The IPS-vs-CAFR gap is a Strategic-vs-Interim semantic distinction, not an extraction error. See `docs/sprint-plans/2026-W2-day-2-findings.md`.
 - 1 of 9 was a mixed case (range narrowed but target unchanged).
 
 The verifier was conflating two different questions:
@@ -49,7 +49,7 @@ Even within an IPS adoption window, plans can revise targets mid-cycle (between 
 - `conflicts` - values differ by 3+ pp, no hierarchy or revision explanation, suggests extraction error or genuine data quality issue
 - `unrelated` - structurally separate sleeves (now mostly pre-filtered out)
 
-`conflicts` is now reserved for genuine data quality flags. In the Day 6 re-run, 29 verified pairs produced 2 conflicts: 1 real (CalPERS Credit, the pre-identified mis-aggregation) and 1 false positive (CalPERS Public Equity / Cap Weighted misread by the model as parent-level rather than sub-sleeve).
+`conflicts` is now reserved for genuine data quality flags. In the Day 6 re-run, 29 verified pairs produced 2 conflicts: 1 was the CalPERS Credit pair (8% IPS vs 3.5% CAFR), which Day 9 reframed as a Strategic-vs-Interim target-table distinction rather than an extraction error (see Day 9 findings); 1 is a model false positive (CalPERS Public Equity / Cap Weighted misread by the model as parent-level rather than sub-sleeve).
 
 ## Allocation-allocation eligibility filters
 

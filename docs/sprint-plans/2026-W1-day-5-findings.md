@@ -82,7 +82,7 @@ All three pre-identified Day 4 cross-source value discrepancies were flagged as 
 
 | Plan | Asset class | IPS | CAFR | Verifier verdict | Day 9 reframe |
 |---|---|---|---|---|---|
-| CalPERS | Credit | 8% | 3.5% | conflicts @ 0.78 - "4.5 percentage point gap that exceeds the 3pp conflict threshold" | Under further investigation; appears to be a Strategic-vs-Interim target distinction, not extraction error - see `2026-W2-day-2-findings.md` |
+| CalPERS | Credit | 8% | 3.5% | conflicts @ 0.78 - "4.5 percentage point gap that exceeds the 3pp conflict threshold" | **Reframed (Day 9).** Not an extraction error. CalPERS' CAFR contains two target tables: Strategic Asset Allocation (p.60, Private Debt 8%) and Interim Policy Target (p.126, Private Debt 3.5%). DB row (3.5%) correctly extracted from Interim; IPS (8%) reflects Strategic. Both are legitimate; gap is a Strategic-vs-Interim table-choice distinction. See `2026-W2-day-2-findings.md`. |
 | CalSTRS | Public Equity | 38% | 42% | conflicts @ 0.82 - "4 percentage point gap... too large to attribute to rounding or sub-sleeve roll-up" | **Real policy drift, not data quality issue (Day 9).** CalSTRS CAFR Current target allocation column: 42% (FY2023) / 41% (FY2024) / 40% (FY2025), tracking down toward IPS 38% long-term target. |
 | CalSTRS | Fixed Income | 14% | 13% | conflicts @ 0.82 - "the policy ranges differ by a full percentage point on both ends and are mutually inconsistent" | **Real policy drift, not data quality issue (Day 9).** CAFR explicitly states 12% / 12% / 13% across the three FYs vs IPS 14%. |
 
