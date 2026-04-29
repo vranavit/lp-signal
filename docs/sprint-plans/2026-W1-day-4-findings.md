@@ -61,15 +61,15 @@ CalPERS IPS captured 5 Fixed Income sub-classes (Treasury 7% / IG Corp 6% / HY 5
 
 **Cross-source agreement on parent-class targets:** Of the comparable rows (same plan, same asset_class, sub_class), 8 of 10 IPS targets match the CAFR target exactly. Validates both extraction paths.
 
-**Real discrepancies:**
+**Cross-source value discrepancies:**
 
-| Plan | Asset class | IPS target | CAFR target | Likely cause |
-|---|---|---|---|---|
-| CalPERS | Credit | 8.00% | 3.50% | CAFR captured Private Debt sub-sleeve as the Credit parent (mis-aggregation in CAFR extraction) |
-| CalSTRS | Public Equity | 38.00% | 42.00% | 4-pt gap; CAFR may include an additional public-equity sleeve in the parent rollup |
-| CalSTRS | Fixed Income | 14.00% | 13.00% | 1-pt gap; minor — could be a rounding or transition-period difference |
+| Plan | Asset class | IPS target | CAFR target | Initial Day 4 hypothesis | Day 9 investigation finding |
+|---|---|---|---|---|---|
+| CalPERS | Credit | 8.00% | 3.50% | CAFR captured Private Debt sub-sleeve as the Credit parent (mis-aggregation in CAFR extraction) | (under further investigation - see Day 9 findings; the CAFR has both a Strategic Asset Allocation table at 8% and an Interim Policy Target table at 3.5%, and extraction inconsistency across rows is the actual issue) |
+| CalSTRS | Public Equity | 38.00% | 42.00% | 4-pt gap; CAFR may include an additional public-equity sleeve in the parent rollup | **Hypothesis refuted (Day 9).** The CAFR text explicitly states 42.0% as CalSTRS' Current target allocation as of 2023-06-30; subsequent CAFRs show 41.0% (FY2024) and 40.0% (FY2025), tracking a multi-year reduction toward the IPS-adopted 38% long-term target. This is real policy drift, not an extraction error. |
+| CalSTRS | Fixed Income | 14.00% | 13.00% | 1-pt gap; minor - could be a rounding or transition-period difference | **Hypothesis refuted (Day 9).** Real CAFR data: 12% / 12% / 13% across FY2023 / FY2024 / FY2025 vs IPS 14%. The classifier extracted exactly what the CAFR's Current target allocation column states. Real policy drift, not rounding. |
 
-The CalPERS Credit discrepancy was already flagged in the Day 3 commit message. CalSTRS gaps are new — worth re-auditing CAFR extraction for both plans separately. Day 4 doesn't fix; flagged for a later session.
+The CalPERS Credit discrepancy was already flagged in the Day 3 commit message; Day 9 surfaced a different root cause (Strategic vs Interim target tables), see `2026-W2-day-2-findings.md`. The two CalSTRS rows are NOT data quality issues per Day 9 inspection of the source PDFs.
 
 **Cross-plan PE/RE comparison:**
 

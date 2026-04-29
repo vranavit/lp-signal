@@ -157,6 +157,16 @@ Mitigation when scale demands: add denormalized columns (`plan_id`, `asset_class
 
 Not blocking; revisit when verification volume passes ~500 rows or when query latency on related-signal lookup exceeds 100ms.
 
+### Cross-source verification cannot detect mutual extraction errors
+
+When two extractions of the same fact are wrong in the same direction, the verifier produces a `confirms` verdict that is artificial.
+
+Example surfaced Day 9: CalPERS PE target verified as `confirms` because both CAFR and IPS extractions read 17%. Source-document inspection revealed the CAFR's actual Interim Policy Target column at p.126 is 15.0%; the classifier read 17% from a different location (the Strategic Asset Allocation table at p.60, which restates the IPS-adopted long-term target). The cross-source verification saw 17% on both sides and confirmed.
+
+Implication: confirmation count is not equivalent to correctness count. A bumped `confidence_multiplier` can reflect aligned extraction errors rather than aligned source documents.
+
+Mitigation: source document audits remain necessary for high-stakes claims. Cross-source verification provides a signal of agreement, not a guarantee of accuracy.
+
 ## Open questions
 
 - **Confidence weighting math.** Spec Section 5e says single-source = 1.0, 2-source confirmation = 1.5, 3-source = 2.0. Should `policy_changed` count toward the multi-source weight? Probably yes, but the math needs spelling out before pipeline integration in Day 7.

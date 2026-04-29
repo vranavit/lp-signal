@@ -78,13 +78,15 @@ Result: 9/48 = 18.8% conflicts (just below threshold). 18/48 = 37.5% confirms (w
 
 ### Data quality findings confirmed
 
-All three pre-identified data quality findings were correctly flagged as `conflicts`:
+All three pre-identified Day 4 cross-source value discrepancies were flagged as `conflicts` by the v1.0 verifier:
 
-| Plan | Asset class | IPS | CAFR | Verifier verdict |
-|---|---|---|---|---|
-| CalPERS | Credit | 8% | 3.5% | conflicts @ 0.78 - "4.5 percentage point gap that exceeds the 3pp conflict threshold" |
-| CalSTRS | Public Equity | 38% | 42% | conflicts @ 0.82 - "4 percentage point gap... too large to attribute to rounding or sub-sleeve roll-up" |
-| CalSTRS | Fixed Income | 14% | 13% | conflicts @ 0.82 - "the policy ranges differ by a full percentage point on both ends and are mutually inconsistent" |
+| Plan | Asset class | IPS | CAFR | Verifier verdict | Day 9 reframe |
+|---|---|---|---|---|---|
+| CalPERS | Credit | 8% | 3.5% | conflicts @ 0.78 - "4.5 percentage point gap that exceeds the 3pp conflict threshold" | Under further investigation; appears to be a Strategic-vs-Interim target distinction, not extraction error - see `2026-W2-day-2-findings.md` |
+| CalSTRS | Public Equity | 38% | 42% | conflicts @ 0.82 - "4 percentage point gap... too large to attribute to rounding or sub-sleeve roll-up" | **Real policy drift, not data quality issue (Day 9).** CalSTRS CAFR Current target allocation column: 42% (FY2023) / 41% (FY2024) / 40% (FY2025), tracking down toward IPS 38% long-term target. |
+| CalSTRS | Fixed Income | 14% | 13% | conflicts @ 0.82 - "the policy ranges differ by a full percentage point on both ends and are mutually inconsistent" | **Real policy drift, not data quality issue (Day 9).** CAFR explicitly states 12% / 12% / 13% across the three FYs vs IPS 14%. |
+
+(Day 6 reframed the two CalSTRS rows from `conflicts` to `policy_changed` via the v1.1 verifier, which is consistent with the Day 9 inspection above. The "data quality findings" label originally used for this section was inaccurate for the two CalSTRS rows; corrected here.)
 
 The verifier independently surfaced additional conflicts on CalSTRS Public Equity, Fixed Income, PE, and Risk Mitigating Strategies across the 2023, 2024, 2025 CAFRs vs. the 2024-01-01 IPS. The pattern is consistent: the IPS captures policy ranges adopted Jan 2024, while older CAFRs reflect pre-2024 ranges. The verifier interprets the range shifts as policy generations rather than rounding.
 
