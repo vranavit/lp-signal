@@ -5,6 +5,7 @@ import {
   extractSignalsFromPdf,
   extractSignalsFromPdfFile,
   extractSignalsFromText,
+  extractSignalsFromPlanPressReleaseText,
   extractSignalsFromAgendaExcerpt,
   extractAllocationsFromCafrPdf,
   extractAllocationsFromCafrPdfFile,
@@ -22,6 +23,7 @@ import {
 } from "./files-api";
 import { PROMPT_VERSION } from "./prompt";
 import { GP_PROMPT_VERSION } from "./prompts/gp-press-release";
+import { PRESS_RELEASE_PROMPT_VERSION } from "./prompts/press-release";
 import { CAFR_PROMPT_VERSION } from "./prompts/cafr-allocation";
 import { computePriorityScore } from "./score";
 import type { ClassifiedSignal } from "./schema";
@@ -120,13 +122,63 @@ export async function classifyDocument(
   } | null;
   const gp = doc.gp as unknown as { id: string; name: string } | null;
 
-  const isPressRelease = doc.document_type === "gp_press_release";
+  const isGpPressRelease = doc.document_type === "gp_press_release";
+  const isPlanPressRelease = doc.document_type === "press_release";
   const isCafr = doc.document_type === "cafr";
 
   // Pre-flight validation (before marking status = processing). Per-route:
-  //   pension PDF: requires plan + not a transcript URL.
-  //   press release: requires gp + content_text.
-  if (!isPressRelease) {
+  //   PDF (board minutes / agenda packet / CAFR): requires plan + non-transcript URL.
+  //   GP press release (text): requires gp + content_text.
+  //   Plan press release (text): requires plan + content_text.
+  if (isGpPressRelease) {
+    if (!gp || !doc.content_text) {
+      await supabase
+        .from("documents")
+        .update({
+          processing_status: "error",
+          error_message: !gp
+            ? "press_release_requires_gp"
+            : "press_release_missing_content_text",
+          processed_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+      return {
+        documentId,
+        ok: false,
+        reason: !gp ? "missing_gp" : "missing_content_text",
+        signalsExtracted: 0,
+        signalsInserted: 0,
+        signalsAccepted: 0,
+        signalsPreliminary: 0,
+        signalsRejected: 0,
+        tokensUsed: 0,
+      };
+    }
+  } else if (isPlanPressRelease) {
+    if (!plan || !doc.content_text) {
+      await supabase
+        .from("documents")
+        .update({
+          processing_status: "error",
+          error_message: !plan
+            ? "plan_press_release_requires_plan"
+            : "plan_press_release_missing_content_text",
+          processed_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+      return {
+        documentId,
+        ok: false,
+        reason: !plan ? "missing_plan" : "missing_content_text",
+        signalsExtracted: 0,
+        signalsInserted: 0,
+        signalsAccepted: 0,
+        signalsPreliminary: 0,
+        signalsRejected: 0,
+        tokensUsed: 0,
+      };
+    }
+  } else {
     const outOfScope = OUT_OF_SCOPE_URL_PATTERNS.find((re) =>
       re.test(doc.source_url ?? ""),
     );
@@ -173,28 +225,6 @@ export async function classifyDocument(
         tokensUsed: 0,
       };
     }
-  } else if (!gp || !doc.content_text) {
-    await supabase
-      .from("documents")
-      .update({
-        processing_status: "error",
-        error_message: !gp
-          ? "press_release_requires_gp"
-          : "press_release_missing_content_text",
-        processed_at: new Date().toISOString(),
-      })
-      .eq("id", documentId);
-    return {
-      documentId,
-      ok: false,
-      reason: !gp ? "missing_gp" : "missing_content_text",
-      signalsExtracted: 0,
-      signalsInserted: 0,
-      signalsAccepted: 0,
-      signalsPreliminary: 0,
-      signalsRejected: 0,
-      tokensUsed: 0,
-    };
   }
 
   await supabase
@@ -211,10 +241,16 @@ export async function classifyDocument(
     let extract: ExtractResult;
     let pageCount: number | undefined;
 
-    if (isPressRelease) {
+    if (isGpPressRelease) {
       extract = await extractSignalsFromText({
         text: doc.content_text as string,
         gpName: (gp as { id: string; name: string }).name,
+        publishedAt: doc.meeting_date,
+      });
+    } else if (isPlanPressRelease) {
+      extract = await extractSignalsFromPlanPressReleaseText({
+        text: doc.content_text as string,
+        planName: (plan as { name: string }).name,
         publishedAt: doc.meeting_date,
       });
     } else {
@@ -391,12 +427,19 @@ export async function classifyDocument(
     const { response, tokensUsed } = extract;
 
     // Origin bundles the provenance each row needs to be written correctly.
-    // Exactly one of { plan, gp } is non-null per document.
+    // Plan-side rows (PDF, plan press release) carry plan_id; GP-side rows
+    // (gp_press_release only) carry gp_id. Never both.
     const origin = {
-      plan_id: isPressRelease ? null : (plan as { id: string }).id,
-      gp_id: isPressRelease ? (gp as { id: string }).id : null,
-      plan_tier: isPressRelease ? null : (plan as { tier: number | null }).tier,
-      prompt_version: isPressRelease ? GP_PROMPT_VERSION : PROMPT_VERSION,
+      plan_id: isGpPressRelease ? null : (plan as { id: string }).id,
+      gp_id: isGpPressRelease ? (gp as { id: string }).id : null,
+      plan_tier: isGpPressRelease
+        ? null
+        : (plan as { tier: number | null }).tier,
+      prompt_version: isGpPressRelease
+        ? GP_PROMPT_VERSION
+        : isPlanPressRelease
+          ? PRESS_RELEASE_PROMPT_VERSION
+          : PROMPT_VERSION,
     };
 
     const signalRows: ReturnType<typeof buildSignalRow>[] = [];

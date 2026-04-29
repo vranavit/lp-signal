@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { buildClassifierPrompt } from "./prompt";
 import { buildGpPressReleasePrompt } from "./prompts/gp-press-release";
+import { buildPressReleasePrompt } from "./prompts/press-release";
 import { buildCafrAllocationPrompt } from "./prompts/cafr-allocation";
 import {
   classifierResponseSchema,
@@ -349,6 +350,32 @@ export async function extractSignalsFromText(
   // block. We label the body clearly so the model can tell system prompt
   // from untrusted document content (supports the injection-defense rule in
   // the prompt).
+  return callClassifier(prompt, {
+    type: "text",
+    text: `<press_release>\n${args.text}\n</press_release>`,
+  });
+}
+
+export type ExtractFromPlanPressReleaseTextArgs = {
+  text: string;
+  planName: string;
+  publishedAt: string | null;
+};
+
+/**
+ * Plan-side press-release classifier entry. Sister to
+ * `extractSignalsFromText` (GP-side). Same response schema, same record
+ * tool — the difference lives in the prompt, which is tuned for plan
+ * releases announcing commitments / target changes / pacing changes
+ * rather than GP fund closes.
+ */
+export async function extractSignalsFromPlanPressReleaseText(
+  args: ExtractFromPlanPressReleaseTextArgs,
+): Promise<ExtractResult> {
+  const prompt = buildPressReleasePrompt({
+    planName: args.planName,
+    publishedAt: args.publishedAt,
+  });
   return callClassifier(prompt, {
     type: "text",
     text: `<press_release>\n${args.text}\n</press_release>`,
