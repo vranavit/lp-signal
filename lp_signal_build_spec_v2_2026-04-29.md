@@ -1,26 +1,24 @@
-# Allocus - Build Spec v3
+# Allocus - Build Spec v2
 
 **Product:** Predictive LP intelligence platform for private markets fundraising teams
 **Geography:** US + Canada public pensions (~350 plans available, 50 plan target by Month 3, 20 today)
 **Buyers:** PE/infra/credit IR and fundraising teams at $500M-$10B AUM firms
 **Owner:** Vitek Vrana / Bloor Capital
-**Spec version:** v3.0 (2026-04-30, end of Week 1 of Month 1)
-**Supersedes:** lp_signal_build_spec_v2_2026-04-29.md
+**Spec version:** v2.0 (2026-04-29)
+**Supersedes:** lp_signal_build_spec_v1_2026-04-21.md
 
 ---
 
-## 0. What changed from v2
+## 0. What changed from v1
 
-v2 was written 2026-04-29 at the start of Week 1 of Month 1. v3 reflects what Week 1 actually shipped and what Week 1 disproved.
+v1 was written 2026-04-21 and described a signal-feed product: scrape board minutes daily, classify into commitment / allocation-change / pacing-change events, push to a dashboard. The actual build evolved into a profile-first product with a predictive layer, because:
 
-1. **Press release stream framing was wrong.** v2 described press releases as the highest-density commitment stream. Week 1 shipped 3 of 5 press release scrapers (CalPERS, CalSTRS, Oregon) and ingested 63 releases. T1 commitment-signal yield was 0% across all 3 plans. Press releases at large public pensions serve PR/governance/performance functions; deal-level disclosure is reserved for board minutes and Investment Transactions Reports. The actual value of press releases is cross-source verification context, relationship-graph signal, and Type 4 (named-fund-without-amount) relationship intelligence.
-2. **IPS is the actual high-yield predictive stream.** Week 1 IPS ingestion produced 25 target allocation rows across 3 plans (CalPERS 11, CalSTRS 8, Oregon 6). The IPS captures sub-sleeve granularity (CalPERS Fixed Income split into 5 sub-sleeves) that CAFR rolls up. IPS allocations feed directly into the predictive layer (Section 5).
-3. **Cross-source verification semantics need a framework, not just a function.** v2 specified a single `verifyCrossSource(signalA, signalB)` function. Day 5 shipped it; Day 6 redesigned it after Day 5 produced 9 of 48 conflicts (most of which were time-period artifacts, not data quality issues). The fix is two-part: a temporal pre-filter and a `policy_changed` verdict. Each pairing of record types (X, Y) needs its own eligibility filter, temporal alignment rule, and verdict vocabulary defined BEFORE the prompt. Documented at `docs/architecture/cross-source-verification-semantics.md`.
-4. **Pacing data is already captured by the existing classifier.** v2 listed pacing plans as a separate Week 3 stream. Week 1 investigation showed pacing is embedded in board minutes / Investment Committee packets at all 5 plans, and 9 T3 pacing signals (signal_type=3, non-seed) have already been extracted by the existing classifier across CalPERS / CalSTRS / SMRS / OPERF. Pacing does not need a separate scraper class.
-5. **Type 4 Relationship Signal added to backlog.** Press release inspection surfaced "named funds without per-fund amounts" content that doesn't fit T1/T2/T3. Defer to Month 2 relationship-graph work.
-6. **Classifier per-signal validation refactor added to backlog.** 13 board-minute documents currently sit in `processing_status='error'` because one bad signal in a doc fails the whole doc's Zod validation. Should be per-signal validation with bad signals dropped and good signals retained. P2 architectural quality issue.
+1. Pension profiles (allocation gap, consultants, board) are richer signal than commitment events alone
+2. Cross-source verification produces higher-confidence intelligence than single-source signal extraction
+3. The unfunded-budget metric (NAV × allocation gap, in dollars) is a more powerful sales hook than "saw a commitment last week"
+4. IR teams need to know who to contact, not just what happened
 
-v3 reflects what was actually built (Days 1-7 of Week 1, Month 1). The original v1 sits at `lp_signal_build_spec_v1_2026-04-21.md` and v2 at `lp_signal_build_spec_v2_2026-04-29.md` for historical reference.
+v2 reflects what was actually built (Days 1-18) and what gets built next (Months 1-4). The original v1 sits at lp_signal_build_spec_v1_2026-04-21.md for historical reference.
 
 ---
 
@@ -44,31 +42,23 @@ An IR person opens Allocus and sees three things, in this order:
 
 The institutional 360 degree view requires monitoring multiple document types per plan, with cross-source verification. Each stream produces signal independently; cross-source confirmation increases confidence weight.
 
-| Stream | What it produces | T1 yield (Week 1 evidence) | Update frequency | Today (20 plans) |
-|---|---|---|---|---|
-| 1. Board minutes | Commitments, votes, allocation discussions, **pacing** | High (393 T1 + 9 T3 signals to date) | Monthly/quarterly | 12/20 plans |
-| 2. CAFR/annual report | Allocations, fees, performance, consultants | Medium (allocations primary, occasional T1) | Annually | 19/20 plans |
-| 3. Investment Policy Statement (IPS) | Target allocations (sub-sleeve granularity), pacing parameters, manager criteria | High for predictive layer (25 target rows on 3 plans, splits CAFR rollups) | When changed | 4/20 plans (Week 1: CalPERS, CalSTRS, NYSCRF, Oregon) |
-| 4. Quarterly performance reports | Manager-level detail, mid-cycle commitments | Untested | Quarterly | 0/20 plans |
-| 5. Asset class committee minutes | PE/RE/Infra-specific deal flow | Untested but likely high | Monthly | 1/20 (LACERA) |
-| 6. Pacing plan | Annual deployment plans by asset class | Subsumed by board minutes (already extracted) | Annually | n/a (no separate stream needed) |
-| 7. Press releases | Cross-source verification context, governance signal, Type 4 relationship signal | **0% T1 across CalPERS / CalSTRS / Oregon (Week 1)** | Daily | 3/20 plans |
+| Stream | What it produces | Update frequency | Today (20 plans) |
+|---|---|---|---|
+| 1. Board minutes | Commitments, votes, allocation discussions | Monthly/quarterly | 12/20 plans |
+| 2. CAFR/annual report | Allocations, fees, performance, consultants | Annually | 19/20 plans |
+| 3. Investment Policy Statement (IPS) | Targets, pacing, manager criteria | When changed | 0/20 plans |
+| 4. Quarterly performance reports | Manager-level detail, mid-cycle commitments | Quarterly | 0/20 plans |
+| 5. Asset class committee minutes | PE/RE/Infra-specific deal flow | Monthly | 1/20 (LACERA) |
+| 6. Pacing plan | Annual deployment plans by asset class | Annually | 0/20 plans |
+| 7. RFP/press releases | Consultant changes, commitments before official disclosure | Ongoing | 0/20 plans |
 
-**Stream value framing (revised after Week 1):**
-
-- Board minutes are the highest-yield direct-signal stream. Most T1 commitment signals and all T3 pacing signals come from here.
-- IPS is the highest-yield stream for the predictive layer. Sub-sleeve granularity feeds niche matching and allocation-gap calculation.
-- Press releases at large public pensions (CalPERS, CalSTRS, Oregon, NYSCRF) yield ~0% T1 commitments. Their value is (a) cross-source verification context for board-minute commitments, (b) governance/staff signal feeding the relationship graph (Section 6), and (c) Type 4 "named funds without amounts" relationship intelligence. Smaller plans may publish more deal-level releases; sample of 3 large plans is not yet representative of all 20.
-- Pacing-as-a-separate-stream was a v2 mistake. Pacing is embedded in Investment Committee packets and the existing classifier extracts it. Stream 6 is retired.
-
-**Plus secondary sources** (P&I, IPE, FundFire, Markets Group): third-party confirmation, commitments often surface here days before official documents. Currently 0% scraped; will be added in Month 2+.
+**Plus secondary sources** (P&I, IPE, FundFire, Markets Group): third-party confirmation, commitments often surface here days before official documents. Currently 0% scraped; will be added in Month 1-2.
 
 **Cross-source verification logic:**
 - Single-source signal: confidence weight 1.0
 - Two-source confirmation (e.g., press release + board minutes): weight 1.5
 - Three+ sources (press + minutes + CAFR): weight 2.0
 - Sources conflict: signal flagged, not auto-resolved
-- See Section 5e and `docs/architecture/cross-source-verification-semantics.md` for the per-pairing semantics framework.
 
 ---
 
@@ -151,15 +141,7 @@ User submits fund profile (asset class, ticket size range, geography, strategy).
 Returns ranked list of best-fit plans.
 
 **5e. Cross-source verification weighting**
-
 Apply weighting from Section 3 cross-source rules to all predictions. Surface confidence interval per prediction.
-
-The verifier is implemented at `lib/predictive/verify-cross-source.ts`. v1.1-allocation handles allocation-allocation pairings (CAFR vs IPS). It uses a two-step design:
-
-1. `buildVerifiablePairs()` pre-filters pairs by temporal alignment (CAFR fiscal year end must fall within an IPS adoption window) and structural sub_class compatibility. Pairs that fail either filter are dropped without invoking the model.
-2. `verifyCrossSource(recordA, recordB)` calls the model on retained pairs and returns one of `confirms` / `partially_confirms` / `policy_changed` / `conflicts` / `unrelated`. The `policy_changed` verdict distinguishes legitimate mid-window policy revisions from genuine data quality issues.
-
-Future pairings (signal-signal for commitment cross-source, consultant-consultant for de-dup, allocation-pacing for consistency) will require pairing-specific eligibility filters, temporal alignment rules, and verdict vocabularies. Each pairing's semantics must be specified before the prompt is written. Framework documented at `docs/architecture/cross-source-verification-semantics.md`.
 
 ### Output format
 
@@ -388,42 +370,16 @@ CREATE TABLE predictive_scores (
   computed_at timestamptz DEFAULT now()
 );
 
--- Cross-source verification tracking (Week 1, Day 5 + Day 6 of Month 1).
--- Generic record-pair design: any two records of types {signal, allocation,
--- consultant} can be verified. v1.1-allocation currently uses
--- (allocation, allocation) pairs.
+-- Cross-source verification tracking (Month 1)
 CREATE TABLE source_verifications (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  record_a_type text NOT NULL CHECK (record_a_type IN ('signal', 'allocation', 'consultant')),
-  record_a_id uuid NOT NULL,
-  record_b_type text NOT NULL CHECK (record_b_type IN ('signal', 'allocation', 'consultant')),
-  record_b_id uuid NOT NULL,
-  verification_type text NOT NULL CHECK (verification_type IN ('confirms', 'partially_confirms', 'policy_changed', 'conflicts', 'unrelated')),
-  confidence decimal(3,2) CHECK (confidence >= 0 AND confidence <= 1),
-  rationale text,
-  verifier_version text NOT NULL,  -- e.g., 'v1.1-allocation'
+  signal_id uuid REFERENCES signals(id),
+  verifying_document_id uuid REFERENCES documents(id),
+  verifying_stream text NOT NULL,
+  verification_type text CHECK (verification_type IN ('confirms', 'partially_confirms', 'conflicts')),
+  notes text,
   created_at timestamptz DEFAULT now()
 );
--- Unique pair index uses least()/greatest() so (A,B) and (B,A) collide.
--- Re-running on the same pair updates rather than duplicating.
-```
-
-### prompt_version conventions
-
-Both `signals.prompt_version`, `pension_allocations.prompt_version`, and `source_verifications.verifier_version` use the same naming scheme: `v{major}.{minor}-{stream-or-target}`.
-
-Current values in production:
-
-| Column | Value | Meaning |
-|---|---|---|
-| `signals.prompt_version` | `v2.x-board-minutes`, `v1.0-pr` | Board-minute classifier (existing) and press-release classifier (Day 2) |
-| `pension_allocations.prompt_version` | `v1.0-cafr`, `v1.1-cafr`, `v1.2-cafr`, `v1.3-cafr` | CAFR allocation extractor across plan-specific calibrations |
-| `pension_allocations.prompt_version` | `v1.0-ips` | IPS allocation extractor (Day 3) |
-| `source_verifications.verifier_version` | `v1.1-allocation` | Cross-source verifier for allocation pairs (Day 6) |
-
-When introducing a new prompt or a calibration revision, bump the `{minor}` and write the new value. Past data is NOT retroactively re-tagged; the verifier_version on a row records which prompt produced that row. Migrations or re-runs explicitly clear old rows before persisting new ones (see `lib/predictive/verify-cross-source.ts` for the v1.0 → v1.1 migration pattern).
-
-```sql
 
 -- User fund profile for niche matching (Month 2)
 CREATE TABLE user_fund_profiles (
@@ -445,37 +401,15 @@ CREATE TABLE user_fund_profiles (
 
 ### Month 1 (May 2026): Stream depth on existing 20 plans
 
-**Week 1 (DONE, 2026-04-23 to 2026-04-30, 13 commits):**
+**Week 1:** Press releases + IPS for 5 plans (CalPERS, CalSTRS, NYSCRF, Mass PRIM, Oregon PERS) + cross-source verification primitive.
 
-Shipped:
-- 3 of 5 press release scrapers: CalPERS, CalSTRS, Oregon. 63 releases ingested. T1 yield 0% across all 3 (key Week 1 finding).
-- 4 of 5 IPS scrapers: CalPERS, NYSCRF, Oregon, CalSTRS. 25 IPS allocation rows extracted across CalPERS / CalSTRS / Oregon (NYSCRF IPS ingested but extracted 0 rows; needs Week 2 investigation).
-- Cross-source verification primitive v1.1 with temporal pre-filter and `policy_changed` verdict. 29 allocation pairs verified across CalPERS / CalSTRS / Oregon. 2 conflicts surfaced (1 real: CalPERS Credit extraction issue; 1 false positive: CalPERS Public Equity / Cap Weighted sub-sleeve misread).
-- Schema: `source_verifications` table + unique-pair index + `policy_changed` verdict.
-- Architecture: `docs/architecture/cross-source-verification-semantics.md` framework for future pairings.
-- 7 daily findings docs.
+**Week 2:** Same 2 streams for remaining 15 plans (where source URLs exist).
 
-Deferred:
-- Mass PRIM press release scraper: aggregator feed, 2-3 PRIM-authored PDFs over 5 years, not worth the build cost.
-- Mass PRIM IPS scraper: no discoverable index URL for the rotating-path PDF.
-- NYSCRF press release scraper: AJAX endpoint requires reverse-engineering, deferred to Week 2.
-- Pipeline integration of `verifyCrossSource` into live ingestion: deferred to Week 2 Day 1.
-
-**Week 2 (UPCOMING, 2026-05-01 to 2026-05-07):**
-
-Priorities, in order:
-1. Pipeline integration of `verifyCrossSource` (Day 1) - auto-run on new allocation arrival, write `source_verifications` rows during ingestion, update signal confidence.
-2. CAFR extraction quality fixes for CalPERS Credit and CalPERS Public Equity sub-sleeve issues (Day 2) - the 2 real or near-real conflicts surfaced by v1.1 verifier.
-3. Mass PRIM IPS scraper via hardcoded URL pattern (Day 3 first half).
-4. NYSCRF press release AJAX investigation (Day 3-4).
-5. Relationship graph foundation - `plan_stakeholders` schema + first staff directory scraper (Day 5+).
-6. Audit follow-ups from Week 1 P2 findings interspersed.
-
-**Week 3:** Asset class committee minutes for top 10 plans (LACERA already done). Pacing as a separate stream is retired - subsumed by board minutes.
+**Week 3:** Pacing plans + asset class committee minutes for top 10 plans.
 
 **Week 4:** Quarterly performance reports for top 10 plans + Month 1 audit pass.
 
-End of Month 1: 20 plans × 4-5 active streams given source availability. The original "7 streams" target is reduced to 5-6 because (a) press releases yield ~0% T1 and serve a different purpose, (b) pacing is subsumed by board minutes, and (c) some plans don't publish committee minutes separately from main board minutes.
+End of Month 1: 20 plans × 7 streams target. Realistic actual: 20 plans × 4-5 streams given source availability.
 
 ### Month 2 (June 2026): Predictive engine v1 + relationship graph
 
@@ -506,19 +440,15 @@ End of Month 4: One design partner using Allocus, willingness-to-pay validated.
 
 ## 12. The classifier prompts (existing + extending)
 
-v1 had a single classifier prompt for signal extraction. v3 has multiple:
+v1 had a single classifier prompt for signal extraction. v2 has multiple:
 
-1. **Consultant classifier** (existing) - extracts `plan_consultants` from CAFR + board minutes.
-2. **Signal classifier** (existing, multiple variants) - extracts T1/T2/T3 signals.
-   - Board-minute variant (`v2.x-board-minutes`) - the original.
-   - Press-release variant (`v1.0-pr`, Day 2) - sister prompt with shared schema, calibrated for the high-noise press release shape.
-   - GP press release variant (existing) - flips the perspective from LP commitment to GP fund close.
-3. **CAFR allocation extractor** (existing, multiple plan-specific calibrations: `v1.0-cafr` through `v1.3-cafr`).
-4. **IPS allocation extractor** (`v1.0-ips`, Day 3) - sister prompt to the CAFR allocation extractor, simpler because IPS has one canonical target table per plan.
-5. **Cross-source verifier** (`v1.1-allocation`, Day 6) - allocation-allocation pairings only at v1.x. Returns `confirms` / `partially_confirms` / `policy_changed` / `conflicts` / `unrelated`. Each future record-type pairing requires its own semantic spec before the prompt is written (see Section 5e and `docs/architecture/cross-source-verification-semantics.md`).
-6. **Stakeholder classifier** (Month 2) - extracts staff directories from plan websites and presentations from board minutes.
+1. **Consultant classifier** (existing - extracts plan_consultants from CAFR + board minutes)
+2. **Signal classifier** (existing - extracts the 3 signal types)
+3. **Stakeholder classifier** (new, Month 2 - extracts staff directory from plan websites + presentations from board minutes)
+4. **Cross-source verifier** (new, Month 1 - takes 2 candidate signals from different streams, decides if they're the same event)
+5. **IPS extractor** (new, Month 1 - extracts target allocations + pacing parameters + manager criteria)
 
-All prompts follow institutional standard: NULL is honest disposition, never default to a value when truth is unknown, false positives destroy trust. Each prompt commits its `prompt_version` to the row it produces (see Section 10 prompt_version conventions).
+All prompts follow institutional standard: NULL is honest disposition, never default to a value when truth is unknown, false positives destroy trust.
 
 ---
 
@@ -591,54 +521,19 @@ These apply to all build work:
 
 ---
 
-## 16. Backlog
+## 16. Open questions for v3
 
-Tracked items deferred from Week 1, surfaced for Month 1-2 work:
-
-### Type 4 Relationship Signal (Month 2)
-
-Press release ingestion in Week 1 surfaced a content pattern that doesn't fit T1/T2/T3:
-
-- "Aggregate program rollups" - press releases that name specific funds without per-fund dollar disclosures. Example: "CalPERS Climate Solutions surpass $53 billion. Funds include TPG Rise Climate, West Street Climate Credit, Generation IM Sustainable PE II..."
-- These are valuable LP intelligence (they confirm an LP-GP relationship exists) but are not commitment signals (no specific dollar amount per fund).
-- The right home for these is the relationship graph (Section 6), not the T1/T2/T3 signal stream. Defer build to Month 2.
-
-Field shape (preliminary):
-- `plan_id`, `gp_name`, `fund_name` (when stated), `program_label` (e.g., "Climate Solutions"), `aggregate_amount_usd` (the program total, not per-fund), `source_document_id`, `source_excerpt`, `prompt_version`.
-
-### Classifier per-signal validation refactor (Month 2)
-
-Current behavior: one bad signal in a doc fails the whole doc's Zod validation, marking the doc `processing_status='error'`. As of 2026-04-30, 13 board-minute docs sit in error state for this reason (8 are validation failures with `null` in a required numeric field; 3 are `out_of_scope: transcript`; 2 are `too_long`; 1 is "Expected array, received string").
-
-Proposed fix: per-signal validation. Drop bad signals, keep good signals, surface the validation error per-signal in a debug log rather than failing the whole doc.
-
-Severity: P2 (architectural quality issue, not data correctness - the affected docs would have produced 0 signals anyway in most cases).
-
-### Verifier v1.2 calibration (Month 2)
-
-The Day 6 v1.1 cross-source verifier produced 1 false positive in 29 pairs (CalPERS Public Equity / Cap Weighted misread as parent-level rather than sub-sleeve). The sibling pair (CalPERS Public Equity / Factor Weighted) was correctly classified, so the prompt CAN handle the pattern. A v1.2 iteration could explicitly enumerate "X Weighted" / "X Active" / "Smart Beta" labels as sub-sleeve indicators. Defer until a second occurrence shows up in real data.
-
-### Sub_class normalization layer (Month 2-3)
-
-`buildVerifiablePairs()` assumes `sub_class` labels are canonical across plans. If two plans use functionally equivalent labels with different strings (e.g., "MBS" vs "Mortgage-Backed Securities"), the structural sub_class filter would drop them silently. No such case exists in the current 3-plan dataset, but Week 2's plan expansion makes this a near-term concern. Likely solution: a `sub_class_canonical` mapping table or a pre-classifier normalization step.
-
----
-
-## 17. Open questions for v4
-
-The following will be resolved by Month 2-4 and trigger v4 of this spec:
+The following will be resolved by Month 2-4 and trigger v3 of this spec:
 
 - What's the minimum viable predictive accuracy for first paid customer?
 - Pricing model details: annual seat, firm site license, or freemium?
 - Predictive engine architecture: prompt-based stays the answer, or move to trained model?
-- Canadian plan coverage timing.
-- Whether to incorporate Allocus as separate entity.
-- Press release stream value reassessment after Week 2 (are smaller plans more deal-disclosing than CalPERS / CalSTRS / Oregon)?
+- Canadian plan coverage timing
+- Whether to incorporate Allocus as separate entity
 
 ---
 
 ## Change log
 
-- v3.0 (2026-04-30): End-of-Week-1 update. Press release framing corrected (0% T1 yield across 3 plans). IPS established as the predictive-layer high-yield stream. Cross-source verification reframed as a per-pairing semantic problem with v1.1 temporal-pre-filter + `policy_changed` verdict. Pacing-as-separate-stream retired. Type 4 Relationship Signal and classifier per-signal validation refactor added to backlog. Section 10 schema corrected to match the actually-shipped `source_verifications` table (record-pair design vs the v2 signal-anchored design).
-- v2.0 (2026-04-29): Major rewrite reflecting profile-first + predictive product. 4-month roadmap. 7-stream document model. Predictive layer specification. Relationship graph addition. Cross-source verification primitive specified. Preserved at `lp_signal_build_spec_v2_2026-04-29.md`.
-- v1.0 (2026-04-21): Initial spec for daily LP signal feed. Preserved at `lp_signal_build_spec_v1_2026-04-21.md`.
+- v2.0 (2026-04-29): Major rewrite reflecting profile-first + predictive product. 4-month roadmap. 7-stream document model. Predictive layer specification. Relationship graph addition. Cross-source verification.
+- v1.0 (2026-04-21): Initial spec for daily LP signal feed. Preserved at lp_signal_build_spec_v1_2026-04-21.md.
