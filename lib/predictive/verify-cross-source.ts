@@ -1,28 +1,54 @@
 /**
  * Cross-source verification primitive.
  *
- * Per build spec v2.0 Section 5e and Section 10. Takes two records
- * (currently only allocation-allocation pairings; signal-signal and
- * consultant-consultant pairings are planned for later weeks) and
- * decides whether they describe the same official policy / same event.
+ * Per build spec v2.0 Section 5e and Section 10. Verifies allocation
+ * records sourced from two different document streams (currently CAFR
+ * and IPS) describe consistent policy.
  *
  * Used by the predictive engine to weight signals: a single-source
  * signal carries weight 1.0, a 2-source confirmation 1.5, a 3-source
  * confirmation 2.0, and conflicts get flagged rather than auto-resolved.
  *
- * Day 5 scope:
- *   - allocation-allocation only
- *   - synchronous function (caller awaits the verdict)
- *   - cheap pre-check on plan_id and asset_class avoids the API round
- *     trip when the answer is obviously "unrelated"
- *   - no automatic write to source_verifications; caller is responsible
- *     for persisting the result via persistVerification (also exported)
+ * Verifier version v1.1-allocation (Day 6 of Week 1):
  *
- * Day 6/7 scope (deferred):
- *   - integrate into live ingestion so new allocations / signals trigger
- *     verification against existing rows
- *   - signal-signal pairings (commitment cross-source)
- *   - consultant-consultant pairings (de-dup canonicalization)
+ * The Day 5 v1.0 framing of "decide if two records describe the same
+ * event" was wrong for the CAFR-IPS pairing. CAFR captures the policy
+ * in force at fiscal year end; IPS captures the policy adopted at the
+ * IPS effective date. Comparing across time conflated two different
+ * questions: "is this the same policy?" and "did the policy change?"
+ *
+ * The v1.1 fix has two parts:
+ *
+ *   1. Temporal pre-filter (buildVerifiablePairs): only compare a CAFR
+ *      to the IPS that was in force at the CAFR's fiscal year end. Pairs
+ *      where the CAFR predates any IPS we have on file are skipped, not
+ *      sent to the model. This eliminates "policy was different in
+ *      different generations" being misclassified as conflicts.
+ *
+ *   2. policy_changed verdict: even within an IPS adoption window, a
+ *      plan can revise targets mid-cycle. The model can now distinguish
+ *      "values match" (confirms), "values differ but explained by
+ *      hierarchy" (partially_confirms), "values differ for legitimate
+ *      mid-cycle policy revision" (policy_changed), and "values
+ *      genuinely disagree" (conflicts). Conflicts is now rare.
+ *
+ * Scope and known limits:
+ *   - Allocation-allocation pairings only. Signal-signal (commitment
+ *     cross-source) and consultant-consultant (de-dup) pairings will
+ *     require different semantics, not just different prompts. See
+ *     docs/architecture/cross-source-verification-semantics.md.
+ *   - The temporal filter is essential. Calling verifyCrossSource on
+ *     an arbitrary pair without first running buildVerifiablePairs
+ *     produces semantically meaningless conflict signals on legitimate
+ *     policy generations.
+ *   - Pure function: does NOT write to the database. Caller is
+ *     responsible for persisting the result via persistVerification.
+ *
+ * Day 7 scope (deferred):
+ *   - integrate into live ingestion so new allocations / signals
+ *     trigger verification against existing rows
+ *   - extend to signal-signal and consultant-consultant pairings with
+ *     pairing-specific semantics
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -31,7 +57,7 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CLASSIFIER_MODEL } from "../classifier/extract";
 
-export const VERIFIER_VERSION = "v1.0-allocation";
+export const VERIFIER_VERSION = "v1.1-allocation";
 
 export type AllocationRecord = {
   id: string;
@@ -50,8 +76,29 @@ export type AllocationRecord = {
 export type VerificationType =
   | "confirms"
   | "partially_confirms"
+  | "policy_changed"
   | "conflicts"
   | "unrelated";
+
+/**
+ * Temporal relationship between a CAFR row and an IPS row.
+ *
+ * Only `cafr_within_ips_window` pairs should be sent to the verifier.
+ * `cafr_predates_ips` pairs are pre-IPS-adoption snapshots and would
+ * compare two different policy generations. `ips_predates_cafr_window`
+ * pairs are superseded IPS rows where a newer IPS was adopted before
+ * the CAFR fiscal year end; the older IPS is no longer in force.
+ */
+export type TemporalRelationship =
+  | "cafr_within_ips_window"
+  | "cafr_predates_ips"
+  | "ips_predates_cafr_window";
+
+export type AllocationPair = {
+  cafr: AllocationRecord;
+  ips: AllocationRecord;
+  temporal_relationship: TemporalRelationship;
+};
 
 export type VerificationResult = {
   same_event: boolean;
@@ -64,6 +111,7 @@ const responseSchema = z.object({
   verification_type: z.enum([
     "confirms",
     "partially_confirms",
+    "policy_changed",
     "conflicts",
     "unrelated",
   ]),
@@ -80,7 +128,13 @@ const recordVerificationToolSchema: Tool = {
     properties: {
       verification_type: {
         type: "string",
-        enum: ["confirms", "partially_confirms", "conflicts", "unrelated"],
+        enum: [
+          "confirms",
+          "partially_confirms",
+          "policy_changed",
+          "conflicts",
+          "unrelated",
+        ],
       },
       confidence: { type: "number", minimum: 0, maximum: 1 },
       rationale: { type: "string" },
@@ -153,10 +207,15 @@ export async function verifyCrossSource(
   }
 
   const v = parsed.data;
+  // policy_changed describes a legitimate mid-window policy revision,
+  // not a different event. The records are still about the same plan +
+  // asset class, just at different points within one IPS adoption
+  // window. Treated as same_event for downstream confidence weighting.
   return {
     same_event:
       v.verification_type === "confirms" ||
-      v.verification_type === "partially_confirms",
+      v.verification_type === "partially_confirms" ||
+      v.verification_type === "policy_changed",
     verification_type: v.verification_type,
     confidence: v.confidence,
     rationale: v.rationale,
@@ -164,13 +223,13 @@ export async function verifyCrossSource(
 }
 
 function buildPrompt(a: AllocationRecord, b: AllocationRecord): string {
-  return `You are verifying whether two pension plan allocation records describe the same official policy.
+  return `You are verifying two pension plan allocation records that have already been pre-filtered to be temporally aligned. The CAFR's fiscal year end falls inside the IPS's adoption window (the IPS is the policy in force at the CAFR's date). Your job is to decide whether the values match, differ for an explainable reason, or genuinely disagree.
 
 ## Record A
 
 - Plan: ${a.plan_name}
 - Asset class: ${a.asset_class}${a.sub_class ? ` / ${a.sub_class}` : ""}
-- Target: ${fmtPct(a.target_pct)}% (range: ${fmtPct(a.target_min_pct)}–${fmtPct(a.target_max_pct)}%)
+- Target: ${fmtPct(a.target_pct)}% (range: ${fmtPct(a.target_min_pct)}-${fmtPct(a.target_max_pct)}%)
 - As of: ${a.as_of_date.slice(0, 10)}
 - Source: ${a.prompt_version}
 - Excerpt: ${a.source_excerpt ?? "(none)"}
@@ -179,24 +238,33 @@ function buildPrompt(a: AllocationRecord, b: AllocationRecord): string {
 
 - Plan: ${b.plan_name}
 - Asset class: ${b.asset_class}${b.sub_class ? ` / ${b.sub_class}` : ""}
-- Target: ${fmtPct(b.target_pct)}% (range: ${fmtPct(b.target_min_pct)}–${fmtPct(b.target_max_pct)}%)
+- Target: ${fmtPct(b.target_pct)}% (range: ${fmtPct(b.target_min_pct)}-${fmtPct(b.target_max_pct)}%)
 - As of: ${b.as_of_date.slice(0, 10)}
 - Source: ${b.prompt_version}
 - Excerpt: ${b.source_excerpt ?? "(none)"}
 
 ## Decision
 
-Are these records describing the same plan's official policy on the same asset class for an overlapping time period?
-
 Output one of:
-- **confirms** — same plan, same asset class, same time period, same value (within rounding, ≤ 0.5 percentage point). High confidence both records correctly describe the policy.
-- **partially_confirms** — same plan, same asset class, same time period, values differ but within reasonable interpretation: one captures the parent class while the other captures a sub-sleeve, or sub_class labels differ but describe the same underlying policy, or one source rolls up what the other splits.
-- **conflicts** — same plan, same asset class, same time period, materially different values (≥ 3 percentage points off) AND no plausible interpretation that reconciles them. One record is likely wrong.
-- **unrelated** — non-overlapping time periods (more than ~24 months apart so they describe different policy generations), OR sub_class labels describe genuinely different sleeves within the same parent class.
 
-CRITICAL: When uncertain between confirms and partially_confirms, prefer **partially_confirms**. When uncertain between conflicts and partially_confirms, prefer **partially_confirms**. Only use **conflicts** when the values differ by 3+ percentage points and you cannot explain the difference.
+- **confirms** - same plan, same asset class, values agree within 0.5 percentage point. Both records correctly describe the policy.
 
-Note on sources: prompt_version="v1.0-ips" rows come from the plan's Investment Policy Statement (the canonical adopted policy). prompt_version like "%cafr%" rows come from the plan's Comprehensive Annual Financial Report (a snapshot of policy in effect at fiscal year end). When both describe the same period, they should describe the same underlying policy — but CAFR extraction occasionally rolls up sub-sleeves the IPS splits, which is a partially_confirms case, not conflicts.
+- **partially_confirms** - value gap is fully explained by hierarchy mismatch: one record captures the parent class while the other captures a sub-sleeve, or one source rolls up what the other splits. Sub_class labels may differ but describe components of the same parent allocation.
+
+- **policy_changed** - both records are valid but the policy was revised within the IPS adoption window. Use when: same plan, same asset class, both records at the parent or matching sub_class level, values differ by 1 to 4 percentage points (or ranges shift while the target is similar), AND the gap is consistent with normal mid-cycle policy drift between IPS adoption and the CAFR fiscal year end. Pension plans regularly revise targets within a single IPS adoption period, especially for asset classes undergoing transition. This is NOT a conflict.
+
+- **conflicts** - values differ by 3 or more percentage points AND no hierarchy explanation fits AND the gap is too large to be normal drift (for example, a parent class showing only sub-sleeve magnitude, suggesting an extraction mis-aggregation rather than a policy revision). This is the rare flag for genuine data quality issues.
+
+- **unrelated** - different plan, different asset class, OR sub_class labels describe genuinely different sleeves within the same parent class.
+
+CRITICAL CALIBRATION:
+
+- Conflicts should be RARE in this filtered dataset. The temporal pre-filter already removed pre-adoption pairs, which is where most "conflicts" came from in v1.0.
+- When the gap is 1 to 4 percentage points on a parent or matching sub_class, prefer **policy_changed** over conflicts. Pension plans drift their targets all the time.
+- When the gap could be hierarchy mismatch (one parent vs one sub-sleeve), prefer **partially_confirms** over conflicts.
+- Use **conflicts** only when the magnitude of the gap or the structure of the values cannot be explained by either policy drift or hierarchy. Example pattern: parent class showing 3.5% when the asset class is typically a 5-15% allocation, suggesting the CAFR extraction captured a sub-sleeve and labeled it the parent.
+
+Note on sources: prompt_version="v1.0-ips" rows come from the plan's Investment Policy Statement (the policy adopted at the IPS effective date). prompt_version like "%cafr%" rows come from the plan's Comprehensive Annual Financial Report (a snapshot of policy in effect at fiscal year end). The CAFR may capture a mid-cycle revision the IPS did not anticipate; that is policy_changed, not conflicts.
 
 Call the record_verification tool exactly once with { "verification_type": ..., "confidence": 0.0-1.0, "rationale": "1-2 sentences" }. The rationale must explain the decision and reference the specific values when relevant.`;
 }
@@ -272,4 +340,91 @@ export async function persistVerification(
     throw new Error(`insert failed: ${error?.message ?? "no row"}`);
   }
   return { id: inserted.id };
+}
+
+/**
+ * Build the set of allocation pairs that are temporally eligible for
+ * cross-source verification.
+ *
+ * For each CAFR row, finds the IPS that was in force at the CAFR's
+ * fiscal year end - the most recent IPS for the same (plan, asset_class,
+ * sub_class) whose as_of_date is at or before the CAFR's as_of_date.
+ *
+ * If multiple IPS rows for the same (plan, asset_class) share the
+ * in-force date but split into different sub_classes (the CalPERS
+ * pattern: parent CAFR vs IPS sub-sleeves), each in-force IPS row is
+ * paired separately with the CAFR. The model then decides whether each
+ * pair is partially_confirms (parent-vs-sub-sleeve) or unrelated
+ * (different sleeves at the sub_class level).
+ *
+ * CAFR rows with no IPS in force at their date are dropped silently:
+ * comparing them to a later IPS would conflate two different policy
+ * generations and produce semantically meaningless conflict signals.
+ *
+ * Pairs with both records carrying non-null sub_class but with mismatched
+ * sub_class strings are also dropped, because they describe genuinely
+ * different sleeves and would always be 'unrelated' (no need to spend
+ * tokens confirming).
+ *
+ * Returns only pairs with temporal_relationship === 'cafr_within_ips_window'.
+ * The other enum values are documented in the type for future use (e.g.,
+ * an ingestion-time helper that records why a pair was rejected).
+ */
+export function buildVerifiablePairs(
+  allocations: AllocationRecord[],
+): AllocationPair[] {
+  const isIps = (r: AllocationRecord) => r.prompt_version.includes("ips");
+  const isCafr = (r: AllocationRecord) => r.prompt_version.includes("cafr");
+
+  const ipsRows = allocations.filter(isIps);
+  const cafrRows = allocations.filter(isCafr);
+
+  const pairs: AllocationPair[] = [];
+
+  for (const cafr of cafrRows) {
+    // All IPS rows that share plan + asset_class with the CAFR.
+    const compatibleIps = ipsRows.filter(
+      (ips) =>
+        ips.plan_id === cafr.plan_id &&
+        ips.asset_class === cafr.asset_class,
+    );
+    if (compatibleIps.length === 0) continue;
+
+    // Group by sub_class and pick the most recent in-force IPS row per
+    // sub_class. An "in force" row has as_of_date <= cafr.as_of_date.
+    const inForceBySubClass = new Map<string, AllocationRecord>();
+    for (const ips of compatibleIps) {
+      if (ips.as_of_date > cafr.as_of_date) continue; // not yet adopted
+      const key = ips.sub_class ?? "__NULL__";
+      const existing = inForceBySubClass.get(key);
+      if (!existing || ips.as_of_date > existing.as_of_date) {
+        inForceBySubClass.set(key, ips);
+      }
+    }
+
+    if (inForceBySubClass.size === 0) {
+      // No IPS adopted yet at the CAFR's date. CAFR predates all IPS
+      // rows we have for this plan + asset_class. Skip - comparing
+      // would conflate generations.
+      continue;
+    }
+
+    for (const ips of inForceBySubClass.values()) {
+      // Drop sub_class mismatches (both non-null and different).
+      if (
+        cafr.sub_class &&
+        ips.sub_class &&
+        cafr.sub_class !== ips.sub_class
+      ) {
+        continue;
+      }
+      pairs.push({
+        cafr,
+        ips,
+        temporal_relationship: "cafr_within_ips_window",
+      });
+    }
+  }
+
+  return pairs;
 }
