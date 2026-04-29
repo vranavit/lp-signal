@@ -75,6 +75,7 @@ type ConsultantRow = {
   mandate_type: string;
   fee_usd: string | number | null;
   fee_year: number | null;
+  fee_period: "annual" | "quarterly" | "ytd" | "monthly" | null;
   source_type: string;
   source_url: string | null;
   source_excerpt: string | null;
@@ -194,7 +195,7 @@ export default async function PensionProfilePage({
   const { data: consultantData } = await supabase
     .from("plan_consultants")
     .select(
-      "id, mandate_type, fee_usd, fee_year, source_type, source_url, source_excerpt, source_document_id, last_verified_at, consultant:consultants(canonical_name, website), document:documents(source_url, meeting_date)",
+      "id, mandate_type, fee_usd, fee_year, fee_period, source_type, source_url, source_excerpt, source_document_id, last_verified_at, consultant:consultants(canonical_name, website), document:documents(source_url, meeting_date)",
     )
     .eq("plan_id", plan.id);
   const consultantRows = (consultantData ?? []) as unknown as ConsultantRow[];
@@ -1223,6 +1224,25 @@ const INCOMPLETE_CONSULTANT_COVERAGE_NOTES: Record<string, string> = {
     "Coverage may be incomplete. The source ACFR's aggregate \"Consultants\" line implies additional firms beyond those shown.",
 };
 
+// Display label for plan_consultants.fee_period. Mirrors the CHECK
+// constraint values in the schema. Empty string for unrecognized values
+// so the UI degrades gracefully if a future enum value lands without a
+// label update here.
+function consultantPeriodLabel(period: ConsultantRow["fee_period"]): string {
+  switch (period) {
+    case "annual":
+      return "year";
+    case "quarterly":
+      return "quarter";
+    case "ytd":
+      return "YTD";
+    case "monthly":
+      return "month";
+    default:
+      return "";
+  }
+}
+
 // Display order for mandate groups. Anything not in this list falls to the
 // bottom in alphabetical order (e.g. future "infrastructure" / "credit").
 const CONSULTANT_MANDATE_ORDER = [
@@ -1413,7 +1433,15 @@ function ConsultantLineItem({ row }: { row: ConsultantRow }) {
       </div>
       <div className="num tabular-nums text-ink-muted text-right">
         {feeNum != null ? (
-          formatUSD(feeNum)
+          <>
+            {formatUSD(feeNum)}
+            {row.fee_period ? (
+              <span className="text-ink-faint">
+                {" "}
+                /{consultantPeriodLabel(row.fee_period)}
+              </span>
+            ) : null}
+          </>
         ) : (
           <span className="text-ink-faint">—</span>
         )}
